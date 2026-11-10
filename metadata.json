@@ -1,0 +1,6 @@
+{
+  "name": "Aviator Bot VIP - Espace Membre & Admin",
+  "description": "Plateforme d'inscription et réservation VIP pour le bot prédictif Aviator (1xBet, Paripesa, Melbet, Premier Bet) avec paiement Mobile Money et espace administrateur sécurisé.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

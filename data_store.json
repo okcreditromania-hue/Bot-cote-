@@ -1,0 +1,56 @@
+{
+  "users": [
+    {
+      "id": "usr_1794345796339",
+      "fullName": "Alain Agossou",
+      "phone": "+2290197887766",
+      "country": "Bénin",
+      "bookmaker": "1xBet",
+      "vipTier": "VIP1",
+      "paymentStatus": "paid",
+      "registeredAt": "10/11/2026 21:23:16",
+      "notes": "Inscription pour le VIP1",
+      "amountPaid": 550,
+      "paymentReference": "32a2c374-ac0c-4745-bb3c-c4e3e62d685c",
+      "paymentDate": "10/11/2026 21:23:32",
+      "paymentMethod": "MTN"
+    }
+  ],
+  "transactions": [
+    {
+      "id": "tx_1794345803118",
+      "saspayPaymentId": "32a2c374-ac0c-4745-bb3c-c4e3e62d685c",
+      "amount": 550,
+      "currency": "XOF",
+      "country": "BJ",
+      "countryName": "Bénin",
+      "network": "mtn_bj",
+      "operatorName": "MTN Mobile Money",
+      "operatorBrand": "MTN",
+      "phone": "+2290197887766",
+      "customerName": "Alain Agossou",
+      "customerEmail": "client@saspay.com",
+      "description": "Paiement VIP 1 Bot Aviator (550 FCFA)",
+      "status": "SUCCESS",
+      "statusMessage": "Paiement vérifié et validé avec succès par l’administrateur.",
+      "createdAt": "2026-11-10T21:23:25.396Z",
+      "updatedAt": "2026-11-10T21:23:32.140Z",
+      "idempotencyKey": "idem_1794345803118_65qc26",
+      "apiResponse": {
+        "success": true,
+        "data": {
+          "message": "Payment pushed successfully",
+          "id": "32a2c374-ac0c-4745-bb3c-c4e3e62d685c",
+          "status": "PENDING",
+          "checkout_url": "",
+          "instructions": [
+            "Accepted"
+          ],
+          "bank_transfer": {}
+        },
+        "code": 201
+      }
+    }
+  ],
+  "supportConversations": []
+}
