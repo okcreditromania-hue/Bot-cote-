@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { TransactionRecord, DashboardStats, PaymentStatus } from '../types/saspay';
+import { TransactionRecord, DashboardStats, CountryCode, PaymentStatus } from '../types/saspay';
 import { COUNTRIES_LIST } from '../data/countries';
-import { User } from '../types';
 import {
   Download,
   Filter,
@@ -27,13 +26,6 @@ import {
   User as UserIcon,
   Phone,
   CheckCheck,
-  Users,
-  Check,
-  ShieldAlert,
-  Trash2,
-  Sparkles,
-  Hourglass,
-  SlidersHorizontal,
 } from 'lucide-react';
 
 interface AdminDashboardProps {
@@ -67,7 +59,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   onRefreshData,
 }) => {
   // Navigation tabs for Admin Console
-  const [activeAdminTab, setActiveAdminTab] = useState<'pending' | 'users' | 'transactions' | 'support'>('pending');
+  const [activeAdminTab, setActiveAdminTab] = useState<'transactions' | 'support'>('transactions');
 
   // Search & Filter state for Transactions
   const [searchTerm, setSearchTerm] = useState('');
@@ -82,44 +74,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [replyText, setReplyText] = useState('');
   const [isSendingReply, setIsSendingReply] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-
-  // Users Management state
-  const [usersList, setUsersList] = useState<User[]>([]);
-  const [userSearchTerm, setUserSearchTerm] = useState('');
-  const [isLoadingUsers, setIsLoadingUsers] = useState(false);
-
-  // Pending Payments state
-  const [pendingPayments, setPendingPayments] = useState<TransactionRecord[]>([]);
-  const [isProcessingDecision, setIsProcessingDecision] = useState<string | null>(null);
-
-  // Fetch pending payments
-  const fetchPendingPayments = async () => {
-    try {
-      const res = await fetch('/api/admin/pending-payments');
-      if (res.ok) {
-        const data = await res.json();
-        if (data.pending) setPendingPayments(data.pending);
-      }
-    } catch (err) {
-      console.warn('Erreur chargement paiements en attente:', err);
-    }
-  };
-
-  // Fetch users list
-  const fetchUsers = async () => {
-    try {
-      setIsLoadingUsers(true);
-      const res = await fetch('/api/users');
-      if (res.ok) {
-        const data = await res.json();
-        if (data.users) setUsersList(data.users);
-      }
-    } catch (err) {
-      console.warn('Erreur chargement utilisateurs:', err);
-    } finally {
-      setIsLoadingUsers(false);
-    }
-  };
 
   // Fetch conversations
   const fetchConversations = async () => {
@@ -140,15 +94,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   };
 
   useEffect(() => {
-    fetchPendingPayments();
-    fetchUsers();
     fetchConversations();
-    const interval = setInterval(() => {
-      fetchPendingPayments();
-      fetchConversations();
-    }, 4000);
+    const interval = setInterval(fetchConversations, 4000);
     return () => clearInterval(interval);
-  }, []);
+  }, [selectedConversationId]);
 
   const activeConversation = conversations.find((c) => c.userId === selectedConversationId) || conversations[0];
   const totalUnreadAdmin = conversations.reduce((sum, c) => sum + (c.unreadCountAdmin || 0), 0);
@@ -164,95 +113,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     }
   }, [selectedConversationId, activeConversation]);
 
-  // Decision on payment: ACCEPT or REJECT
-  const handlePaymentDecision = async (txId: string, decision: 'ACCEPT' | 'REJECT', customReason?: string) => {
-    setIsProcessingDecision(txId);
-    try {
-      const res = await fetch(`/api/admin/payments/${txId}/decision`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          decision,
-          reason: customReason || (decision === 'REJECT' ? 'Paiement non confirmé sur le compte marchand.' : undefined),
-        }),
-      });
-
-      if (res.ok) {
-        setActionNotice(
-          decision === 'ACCEPT'
-            ? '✓ Paiement validé avec succès ! Le bot du client est débloqué.'
-            : '✗ Demande de paiement rejetée.'
-        );
-        setTimeout(() => setActionNotice(''), 3500);
-        fetchPendingPayments();
-        fetchUsers();
-        fetchConversations();
-        onRefreshData();
-      }
-    } catch (err) {
-      console.error('Erreur décision paiement:', err);
-    } finally {
-      setIsProcessingDecision(null);
+  // Scroll to bottom of message thread
+  useEffect(() => {
+    if (activeAdminTab === 'support') {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }
-  };
+  }, [activeConversation?.messages, activeAdminTab]);
 
-  // Toggle user VIP status manually
-  const handleToggleUserVIP = async (user: User) => {
-    const newStatus = user.paymentStatus === 'paid' ? 'unpaid' : 'paid';
-    try {
-      const res = await fetch(`/api/users/${user.id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          paymentStatus: newStatus,
-          paymentDate: newStatus === 'paid' ? new Date().toLocaleString('fr-FR') : undefined,
-          notes: newStatus === 'paid' ? 'VIP activé manuellement par admin' : 'Accès révoqué par admin',
-        }),
-      });
-      if (res.ok) {
-        setActionNotice(`Statut VIP de ${user.fullName} mis à jour : ${newStatus === 'paid' ? 'ACTIF' : 'DÉSACTIVÉ'}`);
-        setTimeout(() => setActionNotice(''), 3000);
-        fetchUsers();
-      }
-    } catch (err) {
-      console.error(err);
-    }
-  };
-
-  // Change user VIP Tier
-  const handleChangeUserTier = async (user: User, newTier: 'VIP1' | 'VIP2') => {
-    try {
-      const res = await fetch(`/api/users/${user.id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ vipTier: newTier }),
-      });
-      if (res.ok) {
-        setActionNotice(`Formule de ${user.fullName} changée pour : ${newTier}`);
-        setTimeout(() => setActionNotice(''), 3000);
-        fetchUsers();
-      }
-    } catch (err) {
-      console.error(err);
-    }
-  };
-
-  // Delete user
-  const handleDeleteUser = async (userId: string, userName: string) => {
-    if (!window.confirm(`Confirmez-vous la suppression du compte de ${userName} ?`)) return;
-    try {
-      const res = await fetch(`/api/users/${userId}`, { method: 'DELETE' });
-      if (res.ok) {
-        setActionNotice(`Utilisateur ${userName} supprimé.`);
-        setTimeout(() => setActionNotice(''), 3000);
-        fetchUsers();
-      }
-    } catch (err) {
-      console.error(err);
-    }
-  };
-
-  // Send admin reply in chat
   const handleSendReply = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!replyText.trim() || !activeConversation || isSendingReply) return;
@@ -300,18 +167,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     return matchesCountry && matchesStatus && matchesSearch;
   });
 
-  // Filter users
-  const filteredUsers = usersList.filter((u) => {
-    const q = userSearchTerm.toLowerCase();
-    return (
-      !userSearchTerm ||
-      u.fullName.toLowerCase().includes(q) ||
-      u.phone.includes(q) ||
-      u.country.toLowerCase().includes(q) ||
-      u.bookmaker.toLowerCase().includes(q)
-    );
-  });
-
   // Export to CSV
   const handleExportCSV = () => {
     const headers = [
@@ -349,10 +204,56 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     const encodedUri = encodeURI(csvContent);
     const link = document.createElement('a');
     link.setAttribute('href', encodedUri);
-    link.setAttribute('download', `saspay_transactions_${new Date().toISOString().slice(0, 10)}.csv`);
+    link.setAttribute(
+      'download',
+      `saspay_transactions_export_${new Date().toISOString().slice(0, 10)}.csv`
+    );
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+
+    setActionNotice('Rapport CSV téléchargé avec succès !');
+    setTimeout(() => setActionNotice(''), 3000);
+  };
+
+  // Export to JSON
+  const handleExportJSON = () => {
+    const jsonString = `data:text/json;charset=utf-8,${encodeURIComponent(
+      JSON.stringify(filteredTransactions, null, 2)
+    )}`;
+    const downloadAnchor = document.createElement('a');
+    downloadAnchor.setAttribute('href', jsonString);
+    downloadAnchor.setAttribute(
+      'download',
+      `saspay_transactions_export_${new Date().toISOString().slice(0, 10)}.json`
+    );
+    document.body.appendChild(downloadAnchor);
+    downloadAnchor.click();
+    downloadAnchor.remove();
+
+    setActionNotice('Rapport JSON téléchargé avec succès !');
+    setTimeout(() => setActionNotice(''), 3000);
+  };
+
+  // Quick simulate status for testing
+  const handleSimulateStatus = async (id: string, status: PaymentStatus) => {
+    try {
+      const res = await fetch(`/api/transactions/${id}/simulate-status`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status }),
+      });
+      if (res.ok) {
+        onRefreshData();
+        setActionNotice(`Statut mis à jour : ${status}`);
+        setTimeout(() => setActionNotice(''), 3000);
+        if (selectedTxDetail && selectedTxDetail.id === id) {
+          setSelectedTxDetail((prev) => (prev ? { ...prev, status } : null));
+        }
+      }
+    } catch (e) {
+      console.error(e);
+    }
   };
 
   return (
@@ -362,17 +263,17 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         <div>
           <div className="flex items-center gap-2">
             <span className="text-xs font-mono font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200">
-              Console d'Administration Aviator & SasPay
+              SasPay Admin Console
             </span>
             <span className="text-xs text-slate-500 font-mono">
-              Identifiant : <strong>34343434</strong>
+              6 Pays Couverts (BJ, CI, SN, TG, BF, CM)
             </span>
           </div>
           <h1 className="text-2xl font-black text-slate-900 tracking-tight mt-1">
-            Gestion & Contrôle des Opérations
+            Tableau de Bord Administrateur
           </h1>
           <p className="text-xs text-slate-500 mt-0.5">
-            Validation manuelle des paiements, gestion des utilisateurs inscrits et messagerie en direct.
+            Suivi des encaissements Mobile Money, messagerie service client et exports comptables.
           </p>
         </div>
 
@@ -380,12 +281,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           <button
             onClick={() => {
               onRefreshData();
-              fetchPendingPayments();
-              fetchUsers();
               fetchConversations();
             }}
-            className="p-2.5 text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 rounded-xl transition-colors cursor-pointer"
-            title="Rafraîchir toutes les données"
+            className="p-2 text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 rounded-xl transition-colors cursor-pointer"
+            title="Rafraîchir les données"
           >
             <RefreshCw className="w-4 h-4" />
           </button>
@@ -396,86 +295,53 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-700" />
             <span>Exporter CSV</span>
           </button>
+          <button
+            onClick={handleExportJSON}
+            className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-blue-800 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-xl transition-colors shadow-2xs cursor-pointer"
+          >
+            <FileCode className="w-3.5 h-3.5 text-blue-700" />
+            <span>Exporter JSON</span>
+          </button>
         </div>
       </div>
 
       {actionNotice && (
         <div className="p-3.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-medium flex items-center gap-2">
-          <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+          <CheckCircle2 className="w-4 h-4 text-emerald-600" />
           <span>{actionNotice}</span>
         </div>
       )}
 
-      {/* 4 Main Admin Tabs */}
-      <div className="flex border-b border-slate-200 gap-2 sm:gap-4 overflow-x-auto">
-        {/* Tab 1: Validation des Paiements */}
+      {/* Admin Tab Switcher */}
+      <div className="flex border-b border-slate-200 gap-3">
         <button
-          onClick={() => setActiveAdminTab('pending')}
-          className={`pb-3 px-3 text-xs sm:text-sm font-bold flex items-center gap-2 border-b-2 cursor-pointer transition-colors shrink-0 ${
-            activeAdminTab === 'pending'
+          onClick={() => setActiveAdminTab('transactions')}
+          className={`pb-3 px-2 text-sm font-bold flex items-center gap-2 border-b-2 cursor-pointer transition-colors ${
+            activeAdminTab === 'transactions'
               ? 'border-emerald-600 text-emerald-800'
               : 'border-transparent text-slate-500 hover:text-slate-800'
           }`}
         >
-          <Hourglass className="w-4 h-4" />
-          <span>Demandes de Validation</span>
-          {pendingPayments.length > 0 ? (
-            <span className="text-[11px] font-mono font-bold px-2 py-0.5 rounded-full bg-amber-500 text-white animate-pulse">
-              {pendingPayments.length} en attente
-            </span>
-          ) : (
-            <span className="text-[11px] font-mono px-2 py-0.5 rounded-full bg-slate-100 text-slate-600">
-              0
-            </span>
-          )}
-        </button>
-
-        {/* Tab 2: Gestion des Utilisateurs */}
-        <button
-          onClick={() => setActiveAdminTab('users')}
-          className={`pb-3 px-3 text-xs sm:text-sm font-bold flex items-center gap-2 border-b-2 cursor-pointer transition-colors shrink-0 ${
-            activeAdminTab === 'users'
-              ? 'border-blue-600 text-blue-800'
-              : 'border-transparent text-slate-500 hover:text-slate-800'
-          }`}
-        >
-          <Users className="w-4 h-4" />
-          <span>Gestion des Utilisateurs</span>
-          <span className="text-[11px] font-mono px-2 py-0.5 rounded-full bg-slate-100 text-slate-700">
-            {usersList.length}
-          </span>
-        </button>
-
-        {/* Tab 3: Transactions & Historique */}
-        <button
-          onClick={() => setActiveAdminTab('transactions')}
-          className={`pb-3 px-3 text-xs sm:text-sm font-bold flex items-center gap-2 border-b-2 cursor-pointer transition-colors shrink-0 ${
-            activeAdminTab === 'transactions'
-              ? 'border-slate-800 text-slate-900'
-              : 'border-transparent text-slate-500 hover:text-slate-800'
-          }`}
-        >
           <CreditCard className="w-4 h-4" />
-          <span>Toutes les Transactions</span>
+          <span>Transactions & Encaissements</span>
           <span className="text-[11px] font-mono px-2 py-0.5 rounded-full bg-slate-100 text-slate-700">
             {transactions.length}
           </span>
         </button>
 
-        {/* Tab 4: Messages Service Client */}
         <button
           onClick={() => setActiveAdminTab('support')}
-          className={`pb-3 px-3 text-xs sm:text-sm font-bold flex items-center gap-2 border-b-2 cursor-pointer transition-colors shrink-0 ${
+          className={`pb-3 px-2 text-sm font-bold flex items-center gap-2 border-b-2 cursor-pointer transition-colors ${
             activeAdminTab === 'support'
-              ? 'border-teal-600 text-teal-800'
+              ? 'border-blue-600 text-blue-800'
               : 'border-transparent text-slate-500 hover:text-slate-800'
           }`}
         >
           <MessageSquare className="w-4 h-4" />
-          <span>Messages Clients</span>
+          <span>Messages Service Client</span>
           {totalUnreadAdmin > 0 ? (
             <span className="text-[11px] font-mono font-bold px-2 py-0.5 rounded-full bg-rose-600 text-white animate-pulse">
-              {totalUnreadAdmin}
+              {totalUnreadAdmin} nouveau{totalUnreadAdmin > 1 ? 'x' : ''}
             </span>
           ) : (
             <span className="text-[11px] font-mono px-2 py-0.5 rounded-full bg-slate-100 text-slate-700">
@@ -486,414 +352,289 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       </div>
 
       {/* =========================================================================
-          TAB 1: VALIDATION DES PAIEMENTS (ACCEPTER OU REJETER)
-          ========================================================================= */}
-      {activeAdminTab === 'pending' && (
-        <div className="space-y-6 animate-in fade-in">
-          <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            <div>
-              <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-amber-50 text-amber-800 border border-amber-200 text-xs font-mono font-bold mb-1">
-                <Hourglass className="w-3.5 h-3.5 text-amber-600" />
-                <span>Paiements en attente de votre décision</span>
-              </div>
-              <h2 className="text-xl font-bold text-slate-900">
-                Menu de Validation Manuelle des Transactions
-              </h2>
-              <p className="text-xs text-slate-500">
-                Chaque paiement initié par un joueur arrive ici. Appuyez sur <strong>Accepter</strong> pour débloquer immédiatement l'accès au bot sur son compte ou sur <strong>Rejeter</strong> pour refuser.
-              </p>
-            </div>
-
-            <button
-              onClick={fetchPendingPayments}
-              className="flex items-center gap-2 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-semibold cursor-pointer shrink-0"
-            >
-              <RefreshCw className="w-3.5 h-3.5" />
-              <span>Actualiser les demandes</span>
-            </button>
-          </div>
-
-          {pendingPayments.length === 0 ? (
-            <div className="p-12 text-center bg-white rounded-2xl border border-slate-200 shadow-xs space-y-3">
-              <div className="w-12 h-12 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center mx-auto">
-                <CheckCircle2 className="w-6 h-6" />
-              </div>
-              <h3 className="text-base font-bold text-slate-900">
-                Aucune demande de paiement en attente
-              </h3>
-              <p className="text-xs text-slate-500 max-w-md mx-auto">
-                Toutes les opérations ont été traitées. Dès qu'un client initie un paiement Mobile Money sur son compte, sa fiche apparaîtra ici avec les boutons Accepter et Rejeter.
-              </p>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {pendingPayments.map((p) => (
-                <div
-                  key={p.id}
-                  className="bg-white p-6 rounded-2xl border-2 border-amber-300 shadow-md space-y-4 relative"
-                >
-                  {/* Card Header */}
-                  <div className="flex items-start justify-between gap-2 border-b border-slate-100 pb-3">
-                    <div>
-                      <span className="text-[10px] font-mono text-slate-400 block uppercase">
-                        Demande reçue
-                      </span>
-                      <h4 className="text-base font-black text-slate-900">{p.customerName}</h4>
-                      <p className="text-xs font-mono text-slate-600 flex items-center gap-1">
-                        <Phone className="w-3 h-3 text-slate-400" />
-                        <strong>{p.phone}</strong>
-                      </p>
-                    </div>
-
-                    <div className="text-right">
-                      <span className="text-2xl font-black font-mono text-emerald-600 tabular-nums">
-                        {p.amount.toLocaleString()}{' '}
-                        <span className="text-xs font-bold text-slate-500">{p.currency}</span>
-                      </span>
-                      <span className="text-[11px] font-bold block text-blue-600">{p.description}</span>
-                    </div>
-                  </div>
-
-                  {/* Card Details */}
-                  <div className="grid grid-cols-2 gap-2 text-xs font-mono bg-slate-50 p-3 rounded-xl border border-slate-200">
-                    <div>
-                      <span className="text-slate-400 block text-[10px]">PAYS & RÉSEAU</span>
-                      <span className="font-bold text-slate-800">
-                        {p.countryName} · {p.operatorName}
-                      </span>
-                    </div>
-                    <div>
-                      <span className="text-slate-400 block text-[10px]">RÉFÉRENCE</span>
-                      <span className="font-bold text-slate-800 truncate block">{p.id}</span>
-                    </div>
-                    <div>
-                      <span className="text-slate-400 block text-[10px]">ID SASPAY</span>
-                      <span className="text-blue-700 truncate block">{p.saspayPaymentId || 'N/A'}</span>
-                    </div>
-                    <div>
-                      <span className="text-slate-400 block text-[10px]">HEURE DEMANDE</span>
-                      <span className="text-slate-700">
-                        {new Date(p.createdAt).toLocaleTimeString('fr-FR', {
-                          hour: '2-digit',
-                          minute: '2-digit',
-                        })}
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* The Two Mandatory Buttons: ACCEPTER OU REJETER */}
-                  <div className="flex items-center gap-3 pt-1">
-                    <button
-                      type="button"
-                      disabled={isProcessingDecision === p.id}
-                      onClick={() => handlePaymentDecision(p.id, 'ACCEPT')}
-                      className="flex-1 py-3 px-4 bg-emerald-600 hover:bg-emerald-700 active:scale-[0.99] text-white font-bold text-xs uppercase tracking-wider rounded-xl shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
-                    >
-                      <Check className="w-4 h-4" />
-                      <span>Accepter (Valider le paiement)</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      disabled={isProcessingDecision === p.id}
-                      onClick={() => handlePaymentDecision(p.id, 'REJECT')}
-                      className="py-3 px-4 bg-rose-50 hover:bg-rose-100 active:scale-[0.99] text-rose-700 font-bold text-xs uppercase tracking-wider rounded-xl border border-rose-200 transition-all flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
-                    >
-                      <X className="w-4 h-4" />
-                      <span>Rejeter</span>
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* =========================================================================
-          TAB 2: GESTION DES UTILISATEURS (NOMBRE, INFOS & CONTRÔLE)
-          ========================================================================= */}
-      {activeAdminTab === 'users' && (
-        <div className="space-y-6 animate-in fade-in">
-          {/* Metrics summary */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            <div className="p-5 bg-white rounded-2xl border border-slate-200 shadow-xs">
-              <span className="text-slate-500 text-xs font-semibold uppercase">TOTAL UTILISATEURS</span>
-              <div className="text-3xl font-black font-mono text-slate-900 mt-2">{usersList.length}</div>
-              <span className="text-xs text-slate-400 mt-1 block">Inscrits dans le système</span>
-            </div>
-
-            <div className="p-5 bg-white rounded-2xl border border-slate-200 shadow-xs">
-              <span className="text-slate-500 text-xs font-semibold uppercase">ACCÈS VIP DÉBLOQUÉS</span>
-              <div className="text-3xl font-black font-mono text-emerald-600 mt-2">
-                {usersList.filter((u) => u.paymentStatus === 'paid').length}
-              </div>
-              <span className="text-xs text-emerald-700 mt-1 block">Paiements validés</span>
-            </div>
-
-            <div className="p-5 bg-white rounded-2xl border border-slate-200 shadow-xs">
-              <span className="text-slate-500 text-xs font-semibold uppercase">NON PAYÉS / EN ATTENTE</span>
-              <div className="text-3xl font-black font-mono text-amber-600 mt-2">
-                {usersList.filter((u) => u.paymentStatus !== 'paid').length}
-              </div>
-              <span className="text-xs text-amber-700 mt-1 block">Places réservées</span>
-            </div>
-          </div>
-
-          {/* User List Card */}
-          <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs space-y-4">
-            <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
-              <div className="relative flex-1 max-w-md">
-                <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
-                <input
-                  type="text"
-                  value={userSearchTerm}
-                  onChange={(e) => setUserSearchTerm(e.target.value)}
-                  placeholder="Rechercher par nom, téléphone, pays ou bookmaker..."
-                  className="w-full pl-10 pr-4 py-2 border border-slate-300 rounded-xl text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:border-blue-600"
-                />
-              </div>
-
-              <button
-                onClick={fetchUsers}
-                className="flex items-center gap-1.5 px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-semibold cursor-pointer shrink-0"
-              >
-                <RefreshCw className="w-3.5 h-3.5" />
-                <span>Actualiser la liste</span>
-              </button>
-            </div>
-
-            {/* Users Table */}
-            <div className="overflow-x-auto rounded-xl border border-slate-200">
-              <table className="w-full text-left text-xs text-slate-700">
-                <thead className="bg-slate-50 text-slate-600 uppercase text-[10px] font-mono border-b border-slate-200">
-                  <tr>
-                    <th className="px-4 py-3">Client & Téléphone</th>
-                    <th className="px-4 py-3">Pays & Bookmaker</th>
-                    <th className="px-4 py-3">Formule VIP</th>
-                    <th className="px-4 py-3">Statut VIP</th>
-                    <th className="px-4 py-3">Date d'inscription</th>
-                    <th className="px-4 py-3 text-right">Actions Manuelles</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {filteredUsers.length === 0 ? (
-                    <tr>
-                      <td colSpan={6} className="px-4 py-8 text-center text-slate-400">
-                        Aucun utilisateur inscrit pour l'instant.
-                      </td>
-                    </tr>
-                  ) : (
-                    filteredUsers.map((u) => {
-                      const isPaid = u.paymentStatus === 'paid';
-                      return (
-                        <tr key={u.id} className="hover:bg-slate-50/80 transition-colors">
-                          <td className="px-4 py-3">
-                            <div className="font-bold text-slate-900">{u.fullName}</div>
-                            <div className="font-mono text-[11px] text-slate-500">{u.phone}</div>
-                          </td>
-                          <td className="px-4 py-3">
-                            <div className="font-medium text-slate-800">{u.country}</div>
-                            <div className="text-[11px] font-mono text-blue-700 font-bold">{u.bookmaker}</div>
-                          </td>
-                          <td className="px-4 py-3">
-                            <div className="flex items-center gap-1">
-                              <span
-                                className={`px-2 py-0.5 rounded text-[10px] font-mono font-bold ${
-                                  u.vipTier === 'VIP1'
-                                    ? 'bg-emerald-100 text-emerald-800'
-                                    : 'bg-blue-100 text-blue-800'
-                                }`}
-                              >
-                                {u.vipTier} ({u.vipTier === 'VIP1' ? '550 F' : '1 500 F'})
-                              </span>
-                              <button
-                                onClick={() => handleChangeUserTier(u, u.vipTier === 'VIP1' ? 'VIP2' : 'VIP1')}
-                                className="text-[10px] text-slate-400 hover:text-slate-700 underline ml-1 cursor-pointer"
-                                title="Basculer formule"
-                              >
-                                Changer
-                              </button>
-                            </div>
-                          </td>
-                          <td className="px-4 py-3">
-                            {isPaid ? (
-                              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-mono font-bold bg-emerald-50 text-emerald-800 border border-emerald-200">
-                                <CheckCircle2 className="w-3 h-3 text-emerald-600" />
-                                VIP ACTIF (DÉVERROUILLÉ)
-                              </span>
-                            ) : (
-                              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-mono font-bold bg-slate-100 text-slate-700 border border-slate-200">
-                                <Clock className="w-3 h-3 text-amber-600" />
-                                NON PAYÉ (RÉSERVÉ)
-                              </span>
-                            )}
-                          </td>
-                          <td className="px-4 py-3 font-mono text-[11px] text-slate-500">
-                            {u.registeredAt || 'Récemment'}
-                          </td>
-                          <td className="px-4 py-3 text-right">
-                            <div className="flex items-center justify-end gap-1.5">
-                              {/* Toggle VIP */}
-                              <button
-                                onClick={() => handleToggleUserVIP(u)}
-                                className={`px-2.5 py-1 text-[11px] font-bold rounded-lg transition-colors cursor-pointer ${
-                                  isPaid
-                                    ? 'bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200'
-                                    : 'bg-emerald-600 hover:bg-emerald-700 text-white'
-                                }`}
-                                title={isPaid ? 'Révoquer accès VIP' : 'Activer VIP directement'}
-                              >
-                                {isPaid ? 'Désactiver VIP' : 'Activer VIP'}
-                              </button>
-
-                              {/* Delete */}
-                              <button
-                                onClick={() => handleDeleteUser(u.id, u.fullName)}
-                                className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
-                                title="Supprimer utilisateur"
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      );
-                    })
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* =========================================================================
-          TAB 3: TOUTES LES TRANSACTIONS & HISTORIQUE
+          TAB 1: TRANSACTIONS & ENCAISSEMENTS
           ========================================================================= */}
       {activeAdminTab === 'transactions' && (
-        <div className="space-y-6 animate-in fade-in">
+        <div className="space-y-8 animate-in fade-in">
           {/* KPI Cards Strip */}
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+            {/* Total Volume */}
             <div className="p-5 rounded-2xl bg-white border border-slate-200 shadow-xs">
-              <span className="text-slate-500 text-xs font-medium block">VOLUME TOTAL VALIDÉ</span>
+              <div className="flex items-center justify-between text-slate-500 text-xs font-medium">
+                <span>VOLUME TOTAL ENCAISSÉ</span>
+                <div className="w-7 h-7 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center">
+                  <DollarSign className="w-4 h-4" />
+                </div>
+              </div>
               <div className="text-2xl font-black font-mono text-slate-900 mt-2 tabular-nums">
-                {(stats?.totalVolume || 0).toLocaleString()} <span className="text-xs font-bold text-slate-400">FCFA</span>
+                {(stats?.totalVolume || 0).toLocaleString()} <span className="text-sm font-bold text-slate-400">FCFA</span>
+              </div>
+              <div className="text-[11px] text-emerald-600 font-medium mt-1">
+                Devises XOF & XAF confondues
               </div>
             </div>
 
+            {/* Successful Transactions */}
             <div className="p-5 rounded-2xl bg-white border border-slate-200 shadow-xs">
-              <span className="text-slate-500 text-xs font-medium block">TRANSACTIONS ACCEPTÉES</span>
+              <div className="flex items-center justify-between text-slate-500 text-xs font-medium">
+                <span>PAIEMENTS RÉUSSIS</span>
+                <div className="w-7 h-7 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center">
+                  <CheckCircle2 className="w-4 h-4" />
+                </div>
+              </div>
               <div className="text-2xl font-black font-mono text-emerald-600 mt-2 tabular-nums">
                 {stats?.successfulTransactions || 0}
               </div>
-            </div>
-
-            <div className="p-5 rounded-2xl bg-white border border-slate-200 shadow-xs">
-              <span className="text-slate-500 text-xs font-medium block">EN ATTENTE VALIDATION</span>
-              <div className="text-2xl font-black font-mono text-amber-600 mt-2 tabular-nums">
-                {pendingPayments.length}
+              <div className="text-[11px] text-slate-500 font-medium mt-1">
+                Taux de succès : <strong>{stats?.successRate || 0}%</strong>
               </div>
             </div>
 
+            {/* Pending Transactions */}
             <div className="p-5 rounded-2xl bg-white border border-slate-200 shadow-xs">
-              <span className="text-slate-500 text-xs font-medium block">REJETÉES / ÉCHOUÉES</span>
-              <div className="text-2xl font-black font-mono text-rose-600 mt-2 tabular-nums">
-                {stats?.failedTransactions || 0}
+              <div className="flex items-center justify-between text-slate-500 text-xs font-medium">
+                <span>EN ATTENTE (USSD)</span>
+                <div className="w-7 h-7 rounded-lg bg-amber-50 text-amber-600 flex items-center justify-center">
+                  <Clock className="w-4 h-4" />
+                </div>
+              </div>
+              <div className="text-2xl font-black font-mono text-amber-600 mt-2 tabular-nums">
+                {stats?.pendingTransactions || 0}
+              </div>
+              <div className="text-[11px] text-amber-700 font-medium mt-1">
+                En cours de validation mobile
+              </div>
+            </div>
+
+            {/* Total Transactions */}
+            <div className="p-5 rounded-2xl bg-white border border-slate-200 shadow-xs">
+              <div className="flex items-center justify-between text-slate-500 text-xs font-medium">
+                <span>TOTAL TRANSACTIONS</span>
+                <div className="w-7 h-7 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center">
+                  <CreditCard className="w-4 h-4" />
+                </div>
+              </div>
+              <div className="text-2xl font-black font-mono text-slate-900 mt-2 tabular-nums">
+                {stats?.totalTransactions || 0}
+              </div>
+              <div className="text-[11px] text-slate-500 font-medium mt-1">
+                Échouées : {stats?.failedTransactions || 0}
               </div>
             </div>
           </div>
 
-          {/* Transactions Filter & Table */}
+          {/* Breakdown by Country & Operator */}
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+            {/* Left: Volume by Country */}
+            <div className="lg:col-span-6 bg-white p-6 rounded-2xl border border-slate-200 shadow-xs space-y-4">
+              <h3 className="text-sm font-bold uppercase tracking-wider text-slate-800 flex items-center justify-between">
+                <span className="flex items-center gap-1.5">
+                  <Globe className="w-4 h-4 text-emerald-600" />
+                  <span>Encaissements par Pays (6)</span>
+                </span>
+                <span className="text-xs font-mono text-slate-400">Montant Encaissé</span>
+              </h3>
+
+              <div className="space-y-3 pt-1">
+                {COUNTRIES_LIST.map((country) => {
+                  const countryVol = stats?.volumeByCountry[country.code] || 0;
+                  const totalVol = stats?.totalVolume || 1;
+                  const percent = totalVol > 0 ? (countryVol / totalVol) * 100 : 0;
+
+                  return (
+                    <div key={country.code} className="space-y-1">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="font-semibold text-slate-800 flex items-center gap-1.5">
+                          <span className="text-sm">{country.flag}</span>
+                          <span>{country.name}</span>
+                          <span className="text-[10px] text-slate-400 font-mono">({country.currency})</span>
+                        </span>
+                        <span className="font-mono font-bold text-slate-900 tabular-nums">
+                          {countryVol.toLocaleString()} {country.currency}
+                        </span>
+                      </div>
+                      <div className="w-full h-2 rounded-full bg-slate-100 overflow-hidden">
+                        <div
+                          className="h-full bg-gradient-to-r from-emerald-500 to-teal-500 rounded-full transition-all duration-500"
+                          style={{ width: `${Math.max(percent, 3)}%` }}
+                        />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Right: Volume by Operator */}
+            <div className="lg:col-span-6 bg-white p-6 rounded-2xl border border-slate-200 shadow-xs space-y-4">
+              <h3 className="text-sm font-bold uppercase tracking-wider text-slate-800 flex items-center justify-between">
+                <span className="flex items-center gap-1.5">
+                  <Layers className="w-4 h-4 text-blue-600" />
+                  <span>Répartition par Opérateur</span>
+                </span>
+                <span className="text-xs font-mono text-slate-400">Taux de captation</span>
+              </h3>
+
+              <div className="space-y-3 pt-1">
+                {stats && Object.keys(stats.volumeByOperator).length > 0 ? (
+                  Object.entries(stats.volumeByOperator).map(([opName, amount]) => {
+                    const totalVol = stats.totalVolume || 1;
+                    const percent = (amount / totalVol) * 100;
+
+                    return (
+                      <div key={opName} className="space-y-1">
+                        <div className="flex items-center justify-between text-xs">
+                          <span className="font-semibold text-slate-800">{opName}</span>
+                          <span className="font-mono font-bold text-slate-900 tabular-nums">
+                            {amount.toLocaleString()} FCFA ({percent.toFixed(0)}%)
+                          </span>
+                        </div>
+                        <div className="w-full h-2 rounded-full bg-slate-100 overflow-hidden">
+                          <div
+                            className="h-full bg-gradient-to-r from-blue-500 to-indigo-600 rounded-full transition-all duration-500"
+                            style={{ width: `${Math.max(percent, 4)}%` }}
+                          />
+                        </div>
+                      </div>
+                    );
+                  })
+                ) : (
+                  <div className="text-xs text-slate-400 py-6 text-center">
+                    Aucun encaissement validé pour le moment.
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Filter and Search Bar */}
           <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs space-y-4">
             <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+              {/* Search Box */}
               <div className="relative flex-1 max-w-md">
                 <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
                 <input
                   type="text"
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
-                  placeholder="Rechercher par client, téléphone ou référence..."
+                  placeholder="Rechercher client, téléphone, ID SasPay..."
                   className="w-full pl-10 pr-4 py-2 border border-slate-300 rounded-xl text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:border-blue-600"
                 />
               </div>
 
+              {/* Filters */}
               <div className="flex items-center gap-2">
+                <select
+                  value={selectedCountry}
+                  onChange={(e) => setSelectedCountry(e.target.value)}
+                  className="px-3 py-2 border border-slate-300 rounded-xl text-xs text-slate-700 bg-white focus:outline-none focus:border-blue-600"
+                >
+                  <option value="ALL">Tous les 6 pays</option>
+                  {COUNTRIES_LIST.map((c) => (
+                    <option key={c.code} value={c.code}>
+                      {c.flag} {c.name}
+                    </option>
+                  ))}
+                </select>
+
                 <select
                   value={selectedStatus}
                   onChange={(e) => setSelectedStatus(e.target.value)}
-                  className="px-3 py-2 border border-slate-300 rounded-xl text-xs text-slate-700 bg-white focus:outline-none"
+                  className="px-3 py-2 border border-slate-300 rounded-xl text-xs text-slate-700 bg-white focus:outline-none focus:border-blue-600"
                 >
                   <option value="ALL">Tous les statuts</option>
-                  <option value="PENDING">En attente admin</option>
-                  <option value="SUCCESS">Validé (Réussi)</option>
-                  <option value="FAILED">Rejeté / Échoué</option>
+                  <option value="SUCCESS">Réussi (Confirmé)</option>
+                  <option value="PENDING">En attente (USSD)</option>
+                  <option value="FAILED">Échoué</option>
                 </select>
               </div>
             </div>
 
+            {/* Transactions Table */}
             <div className="overflow-x-auto rounded-xl border border-slate-200">
               <table className="w-full text-left text-xs text-slate-700">
                 <thead className="bg-slate-50 text-slate-600 uppercase text-[10px] font-mono border-b border-slate-200">
                   <tr>
-                    <th className="px-4 py-3">Réf</th>
+                    <th className="px-4 py-3">Réf / SasPay ID</th>
                     <th className="px-4 py-3">Date</th>
-                    <th className="px-4 py-3">Client</th>
-                    <th className="px-4 py-3">Opérateur & Pays</th>
+                    <th className="px-4 py-3">Client & Téléphone</th>
+                    <th className="px-4 py-3">Pays & Réseau</th>
                     <th className="px-4 py-3">Montant</th>
                     <th className="px-4 py-3">Statut</th>
-                    <th className="px-4 py-3 text-right">Détails</th>
+                    <th className="px-4 py-3 text-right">Action</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-100">
+                <tbody className="divide-y divide-slate-100 font-sans">
                   {filteredTransactions.length === 0 ? (
                     <tr>
                       <td colSpan={7} className="px-4 py-8 text-center text-slate-400">
-                        Aucune transaction enregistrée pour le moment.
+                        Aucune transaction trouvée correspondant aux critères.
                       </td>
                     </tr>
                   ) : (
                     filteredTransactions.map((tx) => (
                       <tr key={tx.id} className="hover:bg-slate-50/80 transition-colors">
-                        <td className="px-4 py-3 font-mono font-bold text-slate-900">{tx.id}</td>
-                        <td className="px-4 py-3 font-mono text-[11px] text-slate-500">
+                        <td className="px-4 py-3 font-mono">
+                          <div className="font-bold text-slate-900">{tx.id}</div>
+                          <div className="text-[10px] text-blue-600 font-medium">
+                            {tx.saspayPaymentId || 'Attente API'}
+                          </div>
+                        </td>
+                        <td className="px-4 py-3 text-slate-500 font-mono text-[11px] whitespace-nowrap">
                           {new Date(tx.createdAt).toLocaleDateString('fr-FR')}
+                          <span className="block text-[10px] text-slate-400">
+                            {new Date(tx.createdAt).toLocaleTimeString('fr-FR', {
+                              hour: '2-digit',
+                              minute: '2-digit',
+                            })}
+                          </span>
                         </td>
                         <td className="px-4 py-3">
                           <div className="font-semibold text-slate-900">{tx.customerName}</div>
                           <div className="font-mono text-[11px] text-slate-500">{tx.phone}</div>
                         </td>
                         <td className="px-4 py-3">
-                          <span className="font-medium">{tx.operatorName}</span> ({tx.countryName})
+                          <div className="font-medium text-slate-900 flex items-center gap-1">
+                            <span>{tx.country === 'BJ' ? '🇧🇯' : tx.country === 'CI' ? '🇨🇮' : tx.country === 'SN' ? '🇸🇳' : tx.country === 'TG' ? '🇹🇬' : tx.country === 'BF' ? '🇧🇫' : '🇨🇲'}</span>
+                            <span>{tx.countryName}</span>
+                          </div>
+                          <div className="text-[10px] font-mono text-slate-500">{tx.operatorName}</div>
                         </td>
-                        <td className="px-4 py-3 font-mono font-black text-slate-900">
-                          {tx.amount.toLocaleString()} {tx.currency}
+                        <td className="px-4 py-3 font-mono">
+                          <span className="font-black text-slate-900 text-sm tabular-nums">
+                            {tx.amount.toLocaleString()}
+                          </span>{' '}
+                          <span className="text-[11px] text-slate-500 font-bold">{tx.currency}</span>
                         </td>
                         <td className="px-4 py-3">
                           {tx.status === 'SUCCESS' ? (
                             <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-mono font-bold bg-emerald-50 text-emerald-800 border border-emerald-200">
                               <CheckCircle2 className="w-3 h-3 text-emerald-600" />
-                              VALIDÉ
+                              RÉUSSI
                             </span>
                           ) : tx.status === 'PENDING' ? (
                             <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-mono font-bold bg-amber-50 text-amber-800 border border-amber-200">
                               <Clock className="w-3 h-3 text-amber-600 animate-spin" />
-                              EN ATTENTE DÉCISION
+                              EN ATTENTE
                             </span>
                           ) : (
                             <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-mono font-bold bg-rose-50 text-rose-800 border border-rose-200">
                               <XCircle className="w-3 h-3 text-rose-600" />
-                              REJETÉ
+                              ÉCHOUÉ
                             </span>
                           )}
                         </td>
                         <td className="px-4 py-3 text-right">
-                          <button
-                            onClick={() => setSelectedTxDetail(tx)}
-                            className="px-2 py-1 bg-slate-100 hover:bg-slate-200 rounded text-slate-700 text-xs cursor-pointer"
-                          >
-                            Voir
-                          </button>
+                          <div className="flex items-center justify-end gap-1.5">
+                            <button
+                              onClick={() => setSelectedTxDetail(tx)}
+                              className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 text-[11px] font-medium rounded-lg transition-colors flex items-center gap-1 cursor-pointer"
+                              title="Voir détail complet"
+                            >
+                              <Eye className="w-3 h-3" />
+                              <span>Détails</span>
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     ))
@@ -906,7 +647,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       )}
 
       {/* =========================================================================
-          TAB 4: MESSAGES SERVICE CLIENT
+          TAB 2: MESSAGES SERVICE CLIENT (SUPPORT MESSAGING CENTER)
           ========================================================================= */}
       {activeAdminTab === 'support' && (
         <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden flex flex-col md:flex-row min-h-[580px] animate-in fade-in">
@@ -976,6 +717,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           {/* Right Column: Chat Thread & Reply Form */}
           {activeConversation ? (
             <div className="flex-1 flex flex-col bg-white">
+              {/* Thread Header */}
               <div className="p-4 border-b border-slate-200 bg-slate-50 flex items-center justify-between">
                 <div className="flex items-center gap-3">
                   <div className="w-10 h-10 rounded-full bg-emerald-100 text-emerald-800 font-bold text-sm flex items-center justify-center">
@@ -995,11 +737,14 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   </div>
                 </div>
 
-                <span className="text-xs font-mono px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">
-                  Discussion Ouverte
-                </span>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-mono px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">
+                    Discussion Ouverte
+                  </span>
+                </div>
               </div>
 
+              {/* Message History */}
               <div className="flex-1 p-5 overflow-y-auto space-y-4 bg-slate-50/40">
                 {activeConversation.messages.map((m) => {
                   const isAdmin = m.sender === 'admin';
@@ -1035,6 +780,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 <div ref={messagesEndRef} />
               </div>
 
+              {/* Reply Form */}
               <form
                 onSubmit={handleSendReply}
                 className="p-4 border-t border-slate-200 bg-white flex items-center gap-3"
@@ -1083,49 +829,57 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             <div className="p-6 space-y-4 text-xs">
               <div className="grid grid-cols-2 gap-3 p-3 rounded-xl bg-slate-50 border border-slate-200">
                 <div>
-                  <span className="text-slate-400 block text-[10px] font-mono">CLIENT</span>
-                  <span className="font-bold text-slate-800">{selectedTxDetail.customerName}</span>
-                </div>
-                <div>
-                  <span className="text-slate-400 block text-[10px] font-mono">TÉLÉPHONE</span>
-                  <span className="font-mono font-bold text-slate-800">{selectedTxDetail.phone}</span>
-                </div>
-                <div>
-                  <span className="text-slate-400 block text-[10px] font-mono">MONTANT</span>
-                  <span className="font-bold text-emerald-600">
-                    {selectedTxDetail.amount} {selectedTxDetail.currency}
+                  <span className="text-slate-400 block text-[10px] font-mono">ID SASPAY</span>
+                  <span className="font-mono font-bold text-blue-600">
+                    {selectedTxDetail.saspayPaymentId || 'N/A'}
                   </span>
                 </div>
                 <div>
-                  <span className="text-slate-400 block text-[10px] font-mono">STATUT</span>
+                  <span className="text-slate-400 block text-[10px] font-mono">IDEMPOTENCY KEY</span>
+                  <span className="font-mono text-slate-700 truncate block">
+                    {selectedTxDetail.idempotencyKey}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-slate-400 block text-[10px] font-mono">STATUT ACTUEL</span>
                   <span className="font-bold">{selectedTxDetail.status}</span>
+                </div>
+                <div>
+                  <span className="text-slate-400 block text-[10px] font-mono">DATE CRÉATION</span>
+                  <span className="font-mono text-slate-700">
+                    {new Date(selectedTxDetail.createdAt).toLocaleString('fr-FR')}
+                  </span>
                 </div>
               </div>
 
-              {/* Action buttons if still pending */}
-              {selectedTxDetail.status === 'PENDING' && (
+              {/* Simulation test triggers */}
+              <div className="p-3 rounded-xl bg-blue-50 border border-blue-200 space-y-2">
+                <span className="font-bold text-blue-950 text-xs block">
+                  Simulateur de mise à jour pour test (Environnement SasPay) :
+                </span>
                 <div className="flex gap-2">
                   <button
-                    onClick={() => {
-                      handlePaymentDecision(selectedTxDetail.id, 'ACCEPT');
-                      setSelectedTxDetail(null);
-                    }}
-                    className="flex-1 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl cursor-pointer"
+                    onClick={() => handleSimulateStatus(selectedTxDetail.id, 'SUCCESS')}
+                    className="flex-1 py-1.5 px-3 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-lg text-xs cursor-pointer"
                   >
-                    Accepter le paiement
+                    Marquer Réussi
                   </button>
                   <button
-                    onClick={() => {
-                      handlePaymentDecision(selectedTxDetail.id, 'REJECT');
-                      setSelectedTxDetail(null);
-                    }}
-                    className="flex-1 py-2 bg-rose-600 hover:bg-rose-700 text-white font-bold rounded-xl cursor-pointer"
+                    onClick={() => handleSimulateStatus(selectedTxDetail.id, 'FAILED')}
+                    className="flex-1 py-1.5 px-3 bg-rose-600 hover:bg-rose-700 text-white font-semibold rounded-lg text-xs cursor-pointer"
                   >
-                    Rejeter
+                    Marquer Échoué
+                  </button>
+                  <button
+                    onClick={() => handleSimulateStatus(selectedTxDetail.id, 'PENDING')}
+                    className="flex-1 py-1.5 px-3 bg-amber-600 hover:bg-amber-700 text-white font-semibold rounded-lg text-xs cursor-pointer"
+                  >
+                    En Attente
                   </button>
                 </div>
-              )}
+              </div>
 
+              {/* Raw JSON viewer */}
               <div className="space-y-1">
                 <span className="text-[11px] font-mono text-slate-500">Payload Brut API :</span>
                 <pre className="p-3 bg-slate-900 text-slate-200 rounded-xl font-mono text-[11px] overflow-x-auto max-h-48">
@@ -1136,6 +890,31 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           </div>
         </div>
       )}
+
+      {/* SasPay Server Config & Security info */}
+      <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs space-y-3">
+        <div className="flex items-center gap-2 text-xs font-bold text-slate-800">
+          <KeyRound className="w-4 h-4 text-emerald-600" />
+          <span>Statut d'Intégration API SasPay (Côté Serveur)</span>
+        </div>
+        <p className="text-xs text-slate-600 leading-relaxed">
+          Votre clé secrète SasPay est sécurisée dans l'environnement serveur Node/Express. Elle n'est jamais exposée dans le navigateur du client.
+        </p>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs font-mono">
+          <div className="p-3 rounded-xl bg-slate-50 border border-slate-200">
+            <span className="text-slate-400 block text-[10px]">SERVEUR API</span>
+            <span className="text-slate-800 font-bold">https://api.saspay.me/api/v1</span>
+          </div>
+          <div className="p-3 rounded-xl bg-slate-50 border border-slate-200">
+            <span className="text-slate-400 block text-[10px]">CLÉ API SASPAY</span>
+            <span className="text-emerald-700 font-bold">sk_live_Y...x8k (Active)</span>
+          </div>
+          <div className="p-3 rounded-xl bg-slate-50 border border-slate-200">
+            <span className="text-slate-400 block text-[10px]">WEBHOOK URL</span>
+            <span className="text-blue-700 font-bold">/api/webhooks/saspay</span>
+          </div>
+        </div>
+      </div>
     </div>
   );
 };

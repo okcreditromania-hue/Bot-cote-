@@ -67,10 +67,10 @@ export const WEST_AFRICA_COUNTRIES = [
   { code: '+229', name: 'Bénin', flag: '🇧🇯' },
   { code: '+225', name: 'Côte d\'Ivoire', flag: '🇨🇮' },
   { code: '+221', name: 'Sénégal', flag: '🇸🇳' },
-  { code: '+228', name: 'Togo', flag: '🇹🇬' },
-  { code: '+226', name: 'Burkina Faso', flag: '🇧🇫' },
-  { code: '+237', name: 'Cameroun', flag: '🇨🇲' },
   { code: '+223', name: 'Mali', flag: '🇲🇱' },
+  { code: '+226', name: 'Burkina Faso', flag: '🇧🇫' },
+  { code: '+228', name: 'Togo', flag: '🇹🇬' },
+  { code: '+237', name: 'Cameroun', flag: '🇨🇲' },
   { code: '+224', name: 'Guinée', flag: '🇬🇳' },
   { code: '+227', name: 'Niger', flag: '🇳🇪' },
 ];
@@ -95,7 +95,7 @@ const DEFAULT_VIP_PLANS: Record<'VIP1' | 'VIP2', VIPPlan> = {
       'Compatible 1xBet, Premier Bet, Paripesa, Melbet & Betwinner',
       'Signaux en temps réel avec cashout de sécurité',
       '2 places disponibles uniquement',
-      'Accès immédiat dès validation par l\'administrateur',
+      'Accès immédiat dès validation du paiement Mobile Money',
     ],
   },
   VIP2: {
@@ -117,14 +117,14 @@ const DEFAULT_VIP_PLANS: Record<'VIP1' | 'VIP2', VIPPlan> = {
       'Conçu pour gros capital de 50 000 F à 100 000 FCFA',
       'Compatible 1xBet, Premier Bet, Paripesa, Melbet & Betwinner',
       '2 places disponibles uniquement',
-      'Accès immédiat et illimité après validation',
+      'Accès immédiat et illimité après paiement',
     ],
   },
 };
 
 const DEFAULT_ADMIN_SETTINGS: AdminSettings = {
-  adminPhone: '34343434',
-  adminPin: '34343434',
+  adminPhone: 'admin',
+  adminPin: '7788',
   botRedirectUrl: 'https://t.me/AviatorPredictorBotVIP_bot',
   botTitle: 'Bot Aviator AI Predictor v4.2 Pro',
   vip1Price: 550,
@@ -138,9 +138,92 @@ const DEFAULT_ADMIN_SETTINGS: AdminSettings = {
     apiKey: '',
     secretKey: '',
     webhookUrl: 'https://api.votre-serveur.com/api/momo/callback',
-    autoValidation: false,
+    autoValidation: true,
   },
 };
+
+const INITIAL_DEMO_USERS: User[] = [
+  {
+    id: 'usr_001',
+    fullName: 'Moussa Traoré',
+    phone: '+2250708091011',
+    country: 'Côte d\'Ivoire',
+    bookmaker: '1xBet',
+    vipTier: 'VIP1',
+    paymentStatus: 'paid',
+    paymentReference: 'MOMO-CI-994821',
+    paymentMethod: 'ORANGE',
+    amountPaid: 550,
+    paymentDate: '2026-11-10 11:20',
+    registeredAt: '2026-11-10 11:15',
+    notes: 'Paiement automatique validé via Orange Money',
+  },
+  {
+    id: 'usr_002',
+    fullName: 'Koffi Mensah',
+    phone: '+22997123456',
+    country: 'Bénin',
+    bookmaker: 'Paripesa',
+    vipTier: 'VIP1',
+    paymentStatus: 'paid',
+    paymentReference: 'MOMO-BJ-381029',
+    paymentMethod: 'MTN',
+    amountPaid: 550,
+    paymentDate: '2026-11-10 13:40',
+    registeredAt: '2026-11-10 13:30',
+    notes: 'Accès Bot débloqué',
+  },
+  {
+    id: 'usr_003',
+    fullName: 'Abdoulaye Diallo',
+    phone: '+221776543210',
+    country: 'Sénégal',
+    bookmaker: 'Premier Bet',
+    vipTier: 'VIP2',
+    paymentStatus: 'unpaid',
+    registeredAt: '2026-11-10 15:02',
+    notes: 'Place réservée - En attente de paiement 1 500 F',
+  },
+];
+
+export const INITIAL_SIGNALS: LiveSignal[] = [
+  {
+    id: 'sig_1',
+    game: '1xBet Aviator',
+    predictedMultiplier: '2.45x',
+    safetyCashout: '1.95x',
+    probability: '98.5%',
+    validUntil: 'Dans 45 sec',
+    status: 'ACTIVE',
+  },
+  {
+    id: 'sig_2',
+    game: 'Paripesa Aviator',
+    predictedMultiplier: '4.80x',
+    safetyCashout: '3.20x',
+    probability: '96.2%',
+    validUntil: 'Tour suivant',
+    status: 'NEXT',
+  },
+  {
+    id: 'sig_3',
+    game: 'Premier Bet Aviator',
+    predictedMultiplier: '1.88x',
+    safetyCashout: '1.70x',
+    probability: '99.1%',
+    validUntil: 'Gagné (1.92x)',
+    status: 'WON',
+  },
+  {
+    id: 'sig_4',
+    game: 'Melbet Spribe',
+    predictedMultiplier: '3.15x',
+    safetyCashout: '2.50x',
+    probability: '97.4%',
+    validUntil: 'Gagné (3.40x)',
+    status: 'WON',
+  },
+];
 
 const STORAGE_KEYS = {
   USERS: 'aviator_bot_users',
@@ -153,10 +236,13 @@ export const StorageService = {
   getUsers(): User[] {
     try {
       const data = localStorage.getItem(STORAGE_KEYS.USERS);
-      if (!data) return [];
+      if (!data) {
+        localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(INITIAL_DEMO_USERS));
+        return INITIAL_DEMO_USERS;
+      }
       return JSON.parse(data);
     } catch {
-      return [];
+      return INITIAL_DEMO_USERS;
     }
   },
 
@@ -166,27 +252,15 @@ export const StorageService = {
 
   addUser(user: User): User {
     const users = this.getUsers();
-    const cleanUserPhone = user.phone.replace(/[^0-9]/g, '');
-    const existingIndex = users.findIndex((u) => u.phone.replace(/[^0-9]/g, '') === cleanUserPhone);
+    // Check if phone already registered
+    const existingIndex = users.findIndex((u) => u.phone.replace(/\s+/g, '') === user.phone.replace(/\s+/g, ''));
     if (existingIndex >= 0) {
       users[existingIndex] = { ...users[existingIndex], ...user };
       this.saveUsers(users);
-      // Also persist to server
-      fetch('/api/users', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(users[existingIndex]),
-      }).catch(console.warn);
       return users[existingIndex];
     }
     users.unshift(user);
     this.saveUsers(users);
-    // Also persist to server
-    fetch('/api/users', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(user),
-    }).catch(console.warn);
     return user;
   },
 
@@ -205,9 +279,9 @@ export const StorageService = {
       ...user,
       paymentStatus: status,
       paymentMethod: method,
-      paymentReference: reference || user.paymentReference,
+      paymentReference: reference || `MOMO-${Date.now().toString().slice(-6)}`,
       paymentDate: status === 'paid' ? new Date().toLocaleString('fr-FR') : user.paymentDate,
-      amountPaid: status === 'paid' ? (user.vipTier === 'VIP1' ? 550 : 1500) : user.amountPaid || 0,
+      amountPaid: status === 'paid' ? (user.vipTier === 'VIP1' ? 550 : 1500) : 0,
     };
     users[index] = updated;
     this.saveUsers(users);
@@ -216,14 +290,6 @@ export const StorageService = {
     if (currentUser && currentUser.id === userId) {
       this.setCurrentUser(updated);
     }
-
-    // Persist to server
-    fetch(`/api/users/${userId}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(updated),
-    }).catch(console.warn);
-
     return updated;
   },
 
@@ -247,7 +313,10 @@ export const StorageService = {
   getAdminSettings(): AdminSettings {
     try {
       const data = localStorage.getItem(STORAGE_KEYS.ADMIN_SETTINGS);
-      if (!data) return DEFAULT_ADMIN_SETTINGS;
+      if (!data) {
+        localStorage.setItem(STORAGE_KEYS.ADMIN_SETTINGS, JSON.stringify(DEFAULT_ADMIN_SETTINGS));
+        return DEFAULT_ADMIN_SETTINGS;
+      }
       return { ...DEFAULT_ADMIN_SETTINGS, ...JSON.parse(data) };
     } catch {
       return DEFAULT_ADMIN_SETTINGS;
@@ -286,25 +355,3 @@ export const StorageService = {
     }
   },
 };
-
-export const INITIAL_SIGNALS: LiveSignal[] = [
-  {
-    id: 'sig_1',
-    game: '1xBet Aviator',
-    predictedMultiplier: '2.45x',
-    safetyCashout: '1.95x',
-    probability: '98.5%',
-    validUntil: 'Dans 45 sec',
-    status: 'ACTIVE',
-  },
-  {
-    id: 'sig_2',
-    game: 'Paripesa Aviator',
-    predictedMultiplier: '4.80x',
-    safetyCashout: '3.20x',
-    probability: '96.2%',
-    validUntil: 'Tour suivant',
-    status: 'NEXT',
-  },
-];
-

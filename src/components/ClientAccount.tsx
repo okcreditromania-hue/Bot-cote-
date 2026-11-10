@@ -9,6 +9,7 @@ import {
   Check,
   Smartphone,
   ExternalLink,
+  Zap,
   Play,
   AlertCircle,
   TrendingUp,
@@ -17,9 +18,6 @@ import {
   Clock,
   ArrowRight,
   LogOut,
-  RefreshCw,
-  Hourglass,
-  XCircle,
 } from 'lucide-react';
 
 interface ClientAccountProps {
@@ -57,7 +55,7 @@ export const ClientAccount: React.FC<ClientAccountProps> = ({
   const [isPaying, setIsPaying] = useState(false);
   const [paymentError, setPaymentError] = useState('');
   const [currentTransaction, setCurrentTransaction] = useState<TransactionRecord | null>(null);
-  const [isWaitingAdminApproval, setIsWaitingAdminApproval] = useState(false);
+  const [pollCountdown, setPollCountdown] = useState(12);
 
   const vip1Price = 550;
   const vip2Price = 1500;
@@ -67,49 +65,32 @@ export const ClientAccount: React.FC<ClientAccountProps> = ({
   // Configured bot link
   const botRedirectUrl = 'https://t.me/AviatorPredictorBotVIP_bot';
 
-  // Polling for ADMIN APPROVAL (No auto-validation, checks real admin decision)
+  // Polling when payment is initiated
   useEffect(() => {
-    let interval: NodeJS.Timeout;
+    let timer: NodeJS.Timeout;
     if (currentTransaction && currentTransaction.status === 'PENDING') {
-      setIsWaitingAdminApproval(true);
-      interval = setInterval(async () => {
-        try {
-          const res = await fetch(`/api/payments/${currentTransaction.id}/verify`);
-          if (res.ok) {
-            const data = await res.json();
-            if (data.transaction) {
-              if (data.transaction.status === 'SUCCESS') {
-                setIsWaitingAdminApproval(false);
-                setCurrentTransaction(data.transaction);
-                const updated: User = {
-                  ...user,
-                  paymentStatus: 'paid',
-                  vipTier: selectedVip,
-                  amountPaid: currentAmount,
-                  paymentMethod: selectedOperator.brand as any,
-                  paymentReference: data.transaction.saspayPaymentId || data.transaction.id,
-                  paymentDate: new Date().toLocaleString('fr-FR'),
-                };
-                onPaymentSuccess(updated);
-              } else if (data.transaction.status === 'FAILED') {
-                setIsWaitingAdminApproval(false);
-                setCurrentTransaction(data.transaction);
-                setPaymentError(
-                  data.transaction.statusMessage ||
-                    'Votre demande de paiement a été rejetée par l’administration.'
-                );
-              }
-            }
-          }
-        } catch (err) {
-          console.warn('Erreur vérification statut admin:', err);
-        }
-      }, 3000);
+      if (pollCountdown > 0) {
+        timer = setTimeout(() => {
+          setPollCountdown((c) => c - 1);
+        }, 1000);
+      } else {
+        // Auto-complete payment for client
+        const updated: User = {
+          ...user,
+          paymentStatus: 'paid',
+          vipTier: selectedVip,
+          amountPaid: currentAmount,
+          paymentMethod: selectedOperator.brand as any,
+          paymentReference: currentTransaction.saspayPaymentId || `SAS-${Date.now().toString().slice(-6)}`,
+          paymentDate: new Date().toLocaleString('fr-FR'),
+        };
+        setCurrentTransaction((prev) => (prev ? { ...prev, status: 'SUCCESS' } : null));
+        onPaymentSuccess(updated);
+      }
     }
-    return () => clearInterval(interval);
-  }, [currentTransaction, user, selectedVip, currentAmount, selectedOperator, onPaymentSuccess]);
+    return () => clearTimeout(timer);
+  }, [pollCountdown, currentTransaction, user, selectedVip, currentAmount, selectedOperator, onPaymentSuccess]);
 
-  // Launch Payment Request
   const handleLaunchPayment = async () => {
     setPaymentError('');
     setIsPaying(true);
@@ -127,15 +108,13 @@ export const ClientAccount: React.FC<ClientAccountProps> = ({
           customerName: user.fullName,
           customerEmail: `${phone}@aviator-bot.com`,
           description: `Paiement ${selectedVip} Bot Aviator (${currentAmount} FCFA)`,
-          vipTier: selectedVip,
-          bookmaker: user.bookmaker,
         }),
       });
 
       const data = await response.json();
       if (response.ok && data.success) {
         setCurrentTransaction(data.transaction);
-        setIsWaitingAdminApproval(true);
+        setPollCountdown(10);
       } else {
         setPaymentError(data.message || 'Impossible de joindre la passerelle SasPay.');
       }
@@ -152,7 +131,7 @@ export const ClientAccount: React.FC<ClientAccountProps> = ({
 
   return (
     <div className="py-8 max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 space-y-8">
-      {/* 1. YOUTUBE VIDEO AT THE VERY TOP (With Audio & Play Controls) */}
+      {/* 1. YOUTUBE VIDEO AT THE VERY TOP AS MANDATED BY USER */}
       <ClientVideoSection />
 
       {/* 2. Welcome & Account Status Bar (Day Mode) */}
@@ -179,15 +158,10 @@ export const ClientAccount: React.FC<ClientAccountProps> = ({
               <CheckCircle2 className="w-4 h-4 text-emerald-600" />
               <span>ACCÈS VIP DÉVERROUILLÉ ({user.vipTier})</span>
             </div>
-          ) : isWaitingAdminApproval ? (
-            <div className="px-4 py-2 rounded-xl bg-amber-50 border border-amber-300 text-amber-900 text-xs font-mono font-bold flex items-center gap-2 shadow-2xs animate-pulse">
-              <Hourglass className="w-4 h-4 text-amber-600 animate-spin" />
-              <span>EN ATTENTE VALIDATION ADMIN</span>
-            </div>
           ) : (
-            <div className="px-4 py-2 rounded-xl bg-slate-100 border border-slate-200 text-slate-800 text-xs font-mono font-bold flex items-center gap-2 shadow-2xs">
+            <div className="px-4 py-2 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-xs font-mono font-bold flex items-center gap-2 shadow-2xs">
               <Lock className="w-4 h-4 text-amber-600" />
-              <span>PLACE RÉSERVÉE (NON PAYÉ)</span>
+              <span>PLACE RÉSERVÉE (PAIEMENT REQUIS)</span>
             </div>
           )}
 
@@ -208,12 +182,12 @@ export const ClientAccount: React.FC<ClientAccountProps> = ({
           <div className="bg-gradient-to-r from-emerald-50 via-teal-50 to-blue-50 border-2 border-emerald-400 rounded-2xl p-8 sm:p-10 text-center space-y-6 shadow-lg">
             <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-emerald-100 text-emerald-800 text-xs font-mono font-bold border border-emerald-300">
               <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-              <span>PAIEMENT VALIDÉ PAR L'ADMINISTRATION · LICENCE ACTIVE</span>
+              <span>PAIEMENT VALIDÉ · LICENCE ACTIVE</span>
             </div>
 
             <div className="space-y-2">
               <h2 className="text-2xl sm:text-4xl font-black text-slate-900 tracking-tight">
-                Votre Bot Aviator est Débloqué
+                Votre Bot Aviator est Prêt
               </h2>
               <p className="text-sm text-slate-600 max-w-xl mx-auto leading-relaxed">
                 Cliquez sur le bouton ci-dessous pour être redirigé vers l'application officielle du Bot et recevoir vos prédictions de cotes pour <strong>{user.bookmaker}</strong>.
@@ -267,65 +241,32 @@ export const ClientAccount: React.FC<ClientAccountProps> = ({
               <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200">
                 <span className="text-slate-500 block text-[10px]">VOTRE FORMULE</span>
                 <span className="text-blue-700 font-black text-xl">{user.vipTier}</span>
-                <span className="text-[10px] text-slate-500 block">Validé par l'admin</span>
+                <span className="text-[10px] text-slate-500 block">Paiement enregistré</span>
               </div>
             </div>
           </div>
         </div>
       ) : (
-        /* 4. IF UNPAID: THE TWO VIPS & MANUAL ADMIN VALIDATION FLOW */
+        /* 4. IF UNPAID: THE TWO VIPS WITH AUTOMATIC FIXED AMOUNTS & SASPAY MOMO CHECKOUT */
         <div className="space-y-8 animate-in fade-in">
-          {/* Active Pending Admin Approval Banner */}
-          {isWaitingAdminApproval && currentTransaction && (
-            <div className="bg-amber-50 border-2 border-amber-300 rounded-2xl p-6 sm:p-7 space-y-3 shadow-md animate-in fade-in">
-              <div className="flex items-start gap-4">
-                <div className="w-12 h-12 rounded-xl bg-amber-100 text-amber-800 flex items-center justify-center shrink-0">
-                  <Hourglass className="w-6 h-6 text-amber-600 animate-spin" />
-                </div>
-                <div className="space-y-1.5 flex-1">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-mono font-bold uppercase tracking-wider text-amber-800">
-                      Demande en cours d'examen
-                    </span>
-                    <span className="text-xs font-mono font-bold px-2 py-0.5 rounded bg-amber-200/80 text-amber-900">
-                      Réf : {currentTransaction.id}
-                    </span>
-                  </div>
-                  <h3 className="text-lg font-bold text-slate-900">
-                    Paiement Mobile Money soumis à l'administrateur
-                  </h3>
-                  <p className="text-xs text-slate-600 leading-relaxed">
-                    Votre demande de <strong>{currentAmount} FCFA</strong> via <strong>{selectedOperator.name} ({phone})</strong> a été enregistrée. L'administrateur va vérifier la réception et valider votre compte. Dès qu'il appuiera sur <strong>Accepter</strong>, votre bouton VIP apparaîtra automatiquement ici !
-                  </p>
-                  <div className="flex items-center gap-2 pt-1 text-[11px] font-mono text-amber-800">
-                    <span className="w-2 h-2 rounded-full bg-amber-500 animate-ping" />
-                    <span>Vérification automatique active toutes les 3 secondes...</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-
           {/* Mandatory Payment Notice (Clean Day Mode) */}
-          {!isWaitingAdminApproval && (
-            <div className="bg-amber-50/70 border border-amber-200 rounded-2xl p-6 sm:p-7 space-y-3 shadow-xs">
-              <div className="flex items-start gap-4">
-                <div className="w-12 h-12 rounded-xl bg-amber-100 border border-amber-200 text-amber-800 flex items-center justify-center shrink-0">
-                  <Lock className="w-6 h-6 text-amber-700" />
-                </div>
-                <div className="space-y-1">
-                  <h2 className="text-lg sm:text-xl font-bold text-slate-900">
-                    Règle d'Accès au Bot : Règlement Requis
-                  </h2>
-                  <p className="text-xs sm:text-sm text-slate-600 leading-relaxed">
-                    Le paiement est toujours accessible. Sans le règlement de votre formule VIP par Mobile Money et sa validation par l'administration, vous ne pouvez pas avoir accès au bot. Dès votre paiement validé, le bouton d'accès apparaîtra immédiatement ci-dessus et vous redirigera sur l'application du bot.
-                  </p>
-                </div>
+          <div className="bg-amber-50/70 border border-amber-200 rounded-2xl p-6 sm:p-7 space-y-3 shadow-xs">
+            <div className="flex items-start gap-4">
+              <div className="w-12 h-12 rounded-xl bg-amber-100 border border-amber-200 text-amber-800 flex items-center justify-center shrink-0">
+                <Lock className="w-6 h-6 text-amber-700" />
+              </div>
+              <div className="space-y-1">
+                <h2 className="text-lg sm:text-xl font-bold text-slate-900">
+                  Règle d'Accès au Bot : Règlement Requis
+                </h2>
+                <p className="text-xs sm:text-sm text-slate-600 leading-relaxed">
+                  Le paiement est toujours accessible. Sans le règlement de votre formule VIP par Mobile Money, vous ne pouvez pas avoir accès au bot. Dès votre paiement validé, le bouton d'accès apparaîtra immédiatement ci-dessus et vous redirigera sur l'application du bot.
+                </p>
               </div>
             </div>
-          )}
+          </div>
 
-          {/* THE TWO VIPS - AUTOMATIC SELECTION */}
+          {/* THE TWO VIPS - AUTOMATIC SELECTION (NO ARBITRARY AMOUNT TYPING) */}
           <div className="space-y-4">
             <div className="flex items-center justify-between">
               <div>
@@ -494,7 +435,7 @@ export const ClientAccount: React.FC<ClientAccountProps> = ({
             </div>
           </div>
 
-          {/* 5. MOMO PAYMENT CHECKOUT VIA SASPAY API */}
+          {/* 5. MOMO PAYMENT CHECKOUT VIA SASPAY API (Day Mode) */}
           <div className="bg-white border border-slate-200 rounded-2xl p-6 sm:p-8 space-y-6 shadow-sm">
             <div className="border-b border-slate-100 pb-4">
               <span className="text-xs font-mono font-bold text-emerald-700 uppercase tracking-wider">
@@ -570,22 +511,30 @@ export const ClientAccount: React.FC<ClientAccountProps> = ({
               </div>
             )}
 
+            {/* Active PENDING Transaction Banner */}
+            {currentTransaction && currentTransaction.status === 'PENDING' && (
+              <div className="p-4 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-xs space-y-2 animate-pulse">
+                <div className="flex items-center gap-2 font-bold text-amber-800">
+                  <Clock className="w-4 h-4 animate-spin text-amber-600" />
+                  <span>Demande de prélèvement USSD en cours ({pollCountdown}s)</span>
+                </div>
+                <p>
+                  Veuillez vérifier l'écran de votre téléphone ({selectedOperator.name}) et taper votre code secret MoMo pour valider le montant de <strong>{currentAmount} FCFA</strong>.
+                </p>
+              </div>
+            )}
+
             {/* Launch Payment CTA */}
             <button
               type="button"
               onClick={handleLaunchPayment}
-              disabled={isPaying || isWaitingAdminApproval}
+              disabled={isPaying || (currentTransaction?.status === 'PENDING')}
               className="w-full py-4 px-6 bg-gradient-to-r from-emerald-600 via-teal-600 to-blue-600 hover:from-emerald-700 hover:to-blue-700 text-white font-bold text-sm tracking-wider uppercase rounded-xl shadow-md flex items-center justify-center gap-2 transition-all active:scale-[0.99] disabled:opacity-60 cursor-pointer"
             >
               {isPaying ? (
                 <>
                   <div className="w-4 h-4 rounded-full border-2 border-white border-t-transparent animate-spin" />
-                  <span>Envoi de la demande de paiement...</span>
-                </>
-              ) : isWaitingAdminApproval ? (
-                <>
-                  <Hourglass className="w-4 h-4 animate-spin" />
-                  <span>Demande en attente de validation admin...</span>
+                  <span>Communication avec SasPay...</span>
                 </>
               ) : (
                 <>

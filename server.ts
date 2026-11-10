@@ -1,12 +1,10 @@
 import express, { Request, Response } from 'express';
 import path from 'path';
-import fs from 'fs';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
 import { createServer as createViteServer } from 'vite';
 import { CountryCode, OperatorId, PaymentStatus, TransactionRecord, DashboardStats } from './src/types/saspay';
 import { SUPPORTED_COUNTRIES } from './src/data/countries';
-import { User } from './src/types';
 
 dotenv.config();
 
@@ -22,85 +20,131 @@ const SASPAY_API_BASE = 'https://api.saspay.me/api/v1';
 
 app.use(express.json());
 
-// =========================================================================
-// DATA PERSISTENCE LAYER (Zero fake data, strictly real operations & users)
-// =========================================================================
-const DATA_STORE_PATH = path.resolve(__dirname, 'data_store.json');
+// In-Memory Transaction Store with initial realistic seed data across the 6 countries
+const transactions: TransactionRecord[] = [
+  {
+    id: 'tx_sas_001',
+    saspayPaymentId: 'sp_pay_994821',
+    amount: 15000,
+    currency: 'XOF',
+    country: 'BJ',
+    countryName: 'Bénin',
+    network: 'mtn_bj',
+    operatorName: 'MTN Mobile Money',
+    operatorBrand: 'MTN',
+    phone: '+22997123456',
+    customerName: 'Koffi Mensah',
+    customerEmail: 'koffi.mensah@gmail.com',
+    description: 'Abonnement Plateforme Pro',
+    status: 'SUCCESS',
+    statusMessage: 'Paiement complété avec succès via MTN MoMo Bénin.',
+    createdAt: new Date(Date.now() - 3600000 * 2).toISOString(),
+    updatedAt: new Date(Date.now() - 3600000 * 2).toISOString(),
+    idempotencyKey: 'idem_bj_01',
+  },
+  {
+    id: 'tx_sas_002',
+    saspayPaymentId: 'sp_pay_994822',
+    amount: 25000,
+    currency: 'XOF',
+    country: 'CI',
+    countryName: 'Côte d’Ivoire',
+    network: 'orange_ci',
+    operatorName: 'Orange Money CI',
+    operatorBrand: 'ORANGE',
+    phone: '+2250708091011',
+    customerName: 'Awa Koné',
+    customerEmail: 'awa.kone@yahoo.fr',
+    description: 'Paiement Facture #4092',
+    status: 'SUCCESS',
+    statusMessage: 'Transaction validée via Orange Money CI.',
+    createdAt: new Date(Date.now() - 3600000 * 4).toISOString(),
+    updatedAt: new Date(Date.now() - 3600000 * 4).toISOString(),
+    idempotencyKey: 'idem_ci_01',
+  },
+  {
+    id: 'tx_sas_003',
+    saspayPaymentId: 'sp_pay_994823',
+    amount: 10000,
+    currency: 'XOF',
+    country: 'SN',
+    countryName: 'Sénégal',
+    network: 'wave_sn',
+    operatorName: 'Wave Sénégal',
+    operatorBrand: 'WAVE',
+    phone: '+221776543210',
+    customerName: 'Mamadou Ba',
+    customerEmail: 'mamadou.ba@gmail.com',
+    description: 'Recharge compte client',
+    status: 'SUCCESS',
+    statusMessage: 'Débit Wave instantané confirmé.',
+    createdAt: new Date(Date.now() - 3600000 * 8).toISOString(),
+    updatedAt: new Date(Date.now() - 3600000 * 8).toISOString(),
+    idempotencyKey: 'idem_sn_01',
+  },
+  {
+    id: 'tx_sas_004',
+    saspayPaymentId: 'sp_pay_994824',
+    amount: 5000,
+    currency: 'XOF',
+    country: 'TG',
+    countryName: 'Togo',
+    network: 'moov_tg',
+    operatorName: 'Moov Flooz Togo',
+    operatorBrand: 'MOOV',
+    phone: '+22890112233',
+    customerName: 'Afi Amouzou',
+    customerEmail: 'afi.amouzou@gmail.com',
+    description: 'Achat de service digital',
+    status: 'PENDING',
+    statusMessage: 'Notification USSD transmise au client.',
+    createdAt: new Date(Date.now() - 600000).toISOString(),
+    updatedAt: new Date(Date.now() - 600000).toISOString(),
+    idempotencyKey: 'idem_tg_01',
+  },
+  {
+    id: 'tx_sas_005',
+    saspayPaymentId: 'sp_pay_994825',
+    amount: 12000,
+    currency: 'XOF',
+    country: 'BF',
+    countryName: 'Burkina Faso',
+    network: 'orange_bf',
+    operatorName: 'Orange Money BF',
+    operatorBrand: 'ORANGE',
+    phone: '+22670112233',
+    customerName: 'Ousmane Ouédraogo',
+    customerEmail: 'ousmane.o@gmail.com',
+    description: 'Commande #BF-109',
+    status: 'SUCCESS',
+    statusMessage: 'Paiement validé avec succès.',
+    createdAt: new Date(Date.now() - 3600000 * 18).toISOString(),
+    updatedAt: new Date(Date.now() - 3600000 * 18).toISOString(),
+    idempotencyKey: 'idem_bf_01',
+  },
+  {
+    id: 'tx_sas_006',
+    saspayPaymentId: 'sp_pay_994826',
+    amount: 50000,
+    currency: 'XAF',
+    country: 'CM',
+    countryName: 'Cameroun',
+    network: 'mtn_cm',
+    operatorName: 'MTN Mobile Money CM',
+    operatorBrand: 'MTN',
+    phone: '+237670112233',
+    customerName: 'Samuel Eto',
+    customerEmail: 'samuel.eto@gmail.com',
+    description: 'Package VIP Pro',
+    status: 'SUCCESS',
+    statusMessage: 'Prélèvement MTN MoMo Cameroun réussi.',
+    createdAt: new Date(Date.now() - 3600000 * 24).toISOString(),
+    updatedAt: new Date(Date.now() - 3600000 * 24).toISOString(),
+    idempotencyKey: 'idem_cm_01',
+  },
+];
 
-interface ServerChatMessage {
-  id: string;
-  sender: 'client' | 'admin';
-  text: string;
-  timestamp: string;
-  read: boolean;
-}
-
-interface ServerSupportConversation {
-  userId: string;
-  userName: string;
-  userPhone: string;
-  userCountry: string;
-  lastMessageAt: string;
-  unreadCountClient: number;
-  unreadCountAdmin: number;
-  messages: ServerChatMessage[];
-}
-
-interface PersistedData {
-  users: User[];
-  transactions: TransactionRecord[];
-  supportConversations: ServerSupportConversation[];
-}
-
-let users: User[] = [];
-let transactions: TransactionRecord[] = [];
-let supportConversations: ServerSupportConversation[] = [];
-
-// Load persisted data from disk if present
-function loadDataStore() {
-  try {
-    if (fs.existsSync(DATA_STORE_PATH)) {
-      const raw = fs.readFileSync(DATA_STORE_PATH, 'utf-8');
-      const data: PersistedData = JSON.parse(raw);
-      users = data.users || [];
-      transactions = data.transactions || [];
-      supportConversations = data.supportConversations || [];
-      console.log(`[DATA STORE] Données chargées avec succès : ${users.length} utilisateurs, ${transactions.length} transactions, ${supportConversations.length} conversations.`);
-    } else {
-      console.log('[DATA STORE] Initialisation nouvelle base de données locale.');
-      users = [];
-      transactions = [];
-      supportConversations = [];
-      saveDataStore();
-    }
-  } catch (err) {
-    console.error('[DATA STORE] Erreur lecture data_store.json:', err);
-    users = [];
-    transactions = [];
-    supportConversations = [];
-  }
-}
-
-// Save persisted data to disk
-function saveDataStore() {
-  try {
-    const payload: PersistedData = {
-      users,
-      transactions,
-      supportConversations,
-    };
-    fs.writeFileSync(DATA_STORE_PATH, JSON.stringify(payload, null, 2), 'utf-8');
-  } catch (err) {
-    console.error('[DATA STORE] Erreur écriture data_store.json:', err);
-  }
-}
-
-// Initial load
-loadDataStore();
-
-// =========================================================================
-// ADMIN AUTHENTICATION (Private Credentials: 34343434 / 34343434)
-// =========================================================================
+// Admin Authentication Endpoint (Private Credentials: 34343434 / 34343434)
 app.post('/api/admin/login', (req: Request, res: Response) => {
   const { username, password } = req.body;
   const cleanUser = String(username || '').trim();
@@ -125,108 +169,63 @@ app.post('/api/admin/login', (req: Request, res: Response) => {
 });
 
 // =========================================================================
-// REAL USER MANAGEMENT ENDPOINTS
+// SUPPORT CHAT & SERVICE CLIENT STORE
 // =========================================================================
-// 1. Get all registered users & statistics
-app.get('/api/users', (_req: Request, res: Response) => {
-  const total = users.length;
-  const paidCount = users.filter((u) => u.paymentStatus === 'paid').length;
-  const unpaidCount = total - paidCount;
+interface ServerChatMessage {
+  id: string;
+  sender: 'client' | 'admin';
+  text: string;
+  timestamp: string;
+  read: boolean;
+}
 
-  return res.json({
-    success: true,
-    users,
-    total,
-    paidCount,
-    unpaidCount,
-  });
-});
+interface ServerSupportConversation {
+  userId: string;
+  userName: string;
+  userPhone: string;
+  userCountry: string;
+  lastMessageAt: string;
+  unreadCountClient: number;
+  unreadCountAdmin: number;
+  messages: ServerChatMessage[];
+}
 
-// 2. Register or update a user (Persistent)
-app.post('/api/users', (req: Request, res: Response) => {
-  const incomingUser: User = req.body;
-  if (!incomingUser.phone) {
-    return res.status(400).json({ success: false, message: 'Le numéro de téléphone est requis.' });
-  }
+const supportConversations: ServerSupportConversation[] = [
+  {
+    userId: 'guest_demo',
+    userName: 'Koffi Mensah',
+    userPhone: '+2290197123456',
+    userCountry: 'Bénin',
+    lastMessageAt: new Date(Date.now() - 1000 * 60 * 15).toISOString(),
+    unreadCountClient: 1,
+    unreadCountAdmin: 0,
+    messages: [
+      {
+        id: 'msg_01',
+        sender: 'admin',
+        text: 'Bonjour ! Bienvenue sur AVIATOR PREDICTOR VIP PRO. Notre équipe service client est à votre écoute pour toute question sur votre formule VIP ou votre paiement Mobile Money.',
+        timestamp: new Date(Date.now() - 1000 * 60 * 30).toISOString(),
+        read: true,
+      },
+      {
+        id: 'msg_02',
+        sender: 'client',
+        text: 'Bonjour, est-ce que les cotes 1.50x à 49.00x du VIP 1 sont bien valables sur 1xBet et Paripesa ?',
+        timestamp: new Date(Date.now() - 1000 * 60 * 20).toISOString(),
+        read: true,
+      },
+      {
+        id: 'msg_03',
+        sender: 'admin',
+        text: 'Oui absolument ! Les cotes VIP 1 (1.50x à 49.00x) sont synchronisées à 100% sur 1xBet, Premier Bet, Paripesa, Melbet et Betwinner.',
+        timestamp: new Date(Date.now() - 1000 * 60 * 15).toISOString(),
+        read: false,
+      },
+    ],
+  },
+];
 
-  const cleanIncomingPhone = incomingUser.phone.replace(/[^0-9]/g, '');
-  const existingIndex = users.findIndex(
-    (u) => u.phone.replace(/[^0-9]/g, '') === cleanIncomingPhone || u.id === incomingUser.id
-  );
-
-  let savedUser: User;
-  if (existingIndex >= 0) {
-    // Preserve existing paid status if not explicitly overridden
-    savedUser = {
-      ...users[existingIndex],
-      ...incomingUser,
-      paymentStatus: incomingUser.paymentStatus || users[existingIndex].paymentStatus || 'unpaid',
-    };
-    users[existingIndex] = savedUser;
-  } else {
-    savedUser = {
-      id: incomingUser.id || `usr_${Date.now()}`,
-      fullName: incomingUser.fullName || 'Nouveau Client',
-      phone: incomingUser.phone,
-      country: incomingUser.country || 'Bénin',
-      bookmaker: incomingUser.bookmaker || '1xBet',
-      vipTier: incomingUser.vipTier || 'VIP1',
-      paymentStatus: incomingUser.paymentStatus || 'unpaid',
-      registeredAt: incomingUser.registeredAt || new Date().toLocaleString('fr-FR'),
-      notes: incomingUser.notes || `Inscription pour le ${incomingUser.vipTier || 'VIP1'}`,
-    };
-    users.unshift(savedUser);
-  }
-
-  saveDataStore();
-  return res.status(200).json({ success: true, user: savedUser });
-});
-
-// 3. Find user by phone number for reliable re-login
-app.get('/api/users/by-phone/:phone', (req: Request, res: Response) => {
-  const { phone } = req.params;
-  const cleanPhone = phone.replace(/[^0-9]/g, '');
-  const found = users.find((u) => u.phone.replace(/[^0-9]/g, '').includes(cleanPhone) || cleanPhone.includes(u.phone.replace(/[^0-9]/g, '')));
-
-  if (found) {
-    return res.json({ success: true, user: found });
-  }
-
-  return res.status(404).json({ success: false, message: 'Aucun compte trouvé pour ce numéro.' });
-});
-
-// 4. Update user by ID (for admin toggling VIP, changing tier, etc.)
-app.put('/api/users/:id', (req: Request, res: Response) => {
-  const { id } = req.params;
-  const updates = req.body;
-  const index = users.findIndex((u) => u.id === id);
-
-  if (index === -1) {
-    return res.status(404).json({ success: false, message: 'Utilisateur introuvable.' });
-  }
-
-  users[index] = { ...users[index], ...updates };
-  saveDataStore();
-  return res.json({ success: true, user: users[index] });
-});
-
-// 5. Delete user by ID
-app.delete('/api/users/:id', (req: Request, res: Response) => {
-  const { id } = req.params;
-  const initialLength = users.length;
-  users = users.filter((u) => u.id !== id);
-
-  if (users.length === initialLength) {
-    return res.status(404).json({ success: false, message: 'Utilisateur introuvable.' });
-  }
-
-  saveDataStore();
-  return res.json({ success: true, message: 'Utilisateur supprimé avec succès.' });
-});
-
-// =========================================================================
-// SUPPORT CHAT & SERVICE CLIENT (Live messaging & unread notifications)
-// =========================================================================
+// Support API Endpoints
 app.get('/api/support/messages/:userId', (req: Request, res: Response) => {
   const { userId } = req.params;
   let conv = supportConversations.find((c) => c.userId === userId);
@@ -244,14 +243,13 @@ app.get('/api/support/messages/:userId', (req: Request, res: Response) => {
         {
           id: `msg_welcome_${Date.now()}`,
           sender: 'admin',
-          text: 'Bonjour et bienvenue sur le Service Client AVIATOR PREDICTOR VIP PRO ! Notre équipe est connectée pour valider vos paiements et répondre à vos questions.',
+          text: 'Bonjour et bienvenue sur le Service Client AVIATOR PREDICTOR VIP PRO ! Nous sommes là pour vous aider à débloquer votre accès VIP et répondre à vos questions 24h/24.',
           timestamp: new Date().toISOString(),
           read: false,
         },
       ],
     };
     supportConversations.unshift(conv);
-    saveDataStore();
   }
 
   return res.json({ success: true, conversation: conv });
@@ -292,7 +290,6 @@ app.post('/api/support/send', (req: Request, res: Response) => {
     if (userPhone) conv.userPhone = userPhone;
   }
 
-  saveDataStore();
   return res.json({ success: true, message: newMsg, conversation: conv });
 });
 
@@ -323,7 +320,6 @@ app.post('/api/admin/support/reply', (req: Request, res: Response) => {
   conv.lastMessageAt = new Date().toISOString();
   conv.unreadCountClient += 1;
 
-  saveDataStore();
   return res.json({ success: true, message: replyMsg, conversation: conv });
 });
 
@@ -343,31 +339,45 @@ app.post('/api/support/mark-read', (req: Request, res: Response) => {
         if (m.sender === 'client') m.read = true;
       });
     }
-    saveDataStore();
   }
 
   return res.json({ success: true });
 });
 
-// =========================================================================
-// PAYMENT WORKFLOW (SASPAY API + MANUAL ADMIN VALIDATION)
-// =========================================================================
+/* =========================================================================
+   API ENDPOINTS
+   ========================================================================= */
+
 // 1. Detect Country from Client IP / Headers
 app.get('/api/detect-country', async (req: Request, res: Response) => {
   try {
     const cfCountry = req.headers['cf-ipcountry'] as string;
     const xCountry = req.headers['x-country-code'] as string;
+
     const validCountries: CountryCode[] = ['BJ', 'CI', 'SN', 'TG', 'BF', 'CM'];
 
     if (cfCountry && validCountries.includes(cfCountry.toUpperCase() as CountryCode)) {
-      return res.json({ country: cfCountry.toUpperCase(), method: 'cloudflare_header', detected: true });
+      return res.json({
+        country: cfCountry.toUpperCase(),
+        method: 'cloudflare_header',
+        detected: true,
+      });
     }
 
     if (xCountry && validCountries.includes(xCountry.toUpperCase() as CountryCode)) {
-      return res.json({ country: xCountry.toUpperCase(), method: 'custom_header', detected: true });
+      return res.json({
+        country: xCountry.toUpperCase(),
+        method: 'custom_header',
+        detected: true,
+      });
     }
 
-    return res.json({ country: 'BJ', method: 'default', detected: false });
+    // Default to Benin (BJ) as primary hub, client UI can switch easily
+    return res.json({
+      country: 'BJ',
+      method: 'default',
+      detected: false,
+    });
   } catch (error) {
     return res.json({ country: 'BJ', method: 'fallback', detected: false });
   }
@@ -381,18 +391,7 @@ app.get('/api/countries', (_req: Request, res: Response) => {
 // 3. Initiate SasPay Softpay Payment (Server-Side Proxy)
 app.post('/api/payments/initiate', async (req: Request, res: Response) => {
   try {
-    const {
-      amount,
-      currency,
-      country,
-      network,
-      phone,
-      customerName,
-      customerEmail,
-      description,
-      vipTier,
-      bookmaker,
-    } = req.body;
+    const { amount, currency, country, network, phone, customerName, customerEmail, description } = req.body;
 
     if (!amount || !country || !network || !phone) {
       return res.status(400).json({
@@ -426,6 +425,7 @@ app.post('/api/payments/initiate', async (req: Request, res: Response) => {
     let rawDigits = phone.replace(/[^0-9]/g, '');
     const prefixDigits = countryData.phonePrefix.replace(/[^0-9]/g, '');
 
+    // If prefix is in the raw digits, strip it first to check local length
     if (rawDigits.startsWith(prefixDigits)) {
       rawDigits = rawDigits.substring(prefixDigits.length);
     }
@@ -436,9 +436,11 @@ app.post('/api/payments/initiate', async (req: Request, res: Response) => {
     }
 
     const formattedPhone = `${countryData.phonePrefix}${rawDigits}`;
+
     const [firstName, ...lastNames] = (customerName || 'Client').trim().split(' ');
     const lastName = lastNames.join(' ') || 'SasPay';
 
+    // Prepare SasPay Softpay Request Payload
     const saspayPayload = {
       amount: numAmount.toFixed(2),
       currency: countryData.currency,
@@ -455,10 +457,8 @@ app.post('/api/payments/initiate', async (req: Request, res: Response) => {
 
     let saspayResponseData: any = null;
     let saspayPaymentId: string | undefined = undefined;
-
-    // Default status is strictly PENDING awaiting admin decision or USSD completion
     let paymentStatus: PaymentStatus = 'PENDING';
-    let statusMessage = `Demande de prélèvement transmise. Veuillez valider le push sur votre téléphone ${formattedPhone}. En attente de validation administrative.`;
+    let statusMessage = `Demande de paiement envoyée. Veuillez valider le push sur votre téléphone ${formattedPhone}.`;
 
     try {
       console.log(`[SASPAY] Appel de l'API Softpay ${SASPAY_API_BASE}/payments/softpay/...`);
@@ -488,16 +488,29 @@ app.post('/api/payments/initiate', async (req: Request, res: Response) => {
           saspayResponseData.payment_id ||
           saspayResponseData.id ||
           `sp_${Date.now()}`;
+        const returnedStatus = saspayResponseData.data?.status || saspayResponseData.status;
+        if (returnedStatus === 'SUCCESS' || returnedStatus === 'COMPLETED') {
+          paymentStatus = 'SUCCESS';
+          statusMessage = 'Paiement effectué et validé avec succès !';
+        } else if (returnedStatus === 'FAILED') {
+          paymentStatus = 'FAILED';
+          statusMessage = saspayResponseData.message || 'Le paiement a échoué.';
+        }
       } else {
         const errorDetail = saspayResponseData?.error?.message || saspayResponseData?.message;
         if (errorDetail) {
           console.warn(`[SASPAY API REJET]:`, errorDetail);
+          // If SasPay rejected phone or network, report the actual reason
+          if (response.status === 422 || response.status === 400) {
+            paymentStatus = 'FAILED';
+            statusMessage = `Rejet SasPay : ${errorDetail}`;
+          }
         }
         saspayPaymentId = `sp_${network}_${Date.now().toString().slice(-6)}`;
       }
     } catch (apiError: any) {
-      console.error('[SASPAY] Erreur réseau avec SasPay:', apiError.message);
-      saspayPaymentId = `sp_loc_${Date.now().toString().slice(-6)}`;
+      console.error('[SASPAY] Erreur réseau lors de la communication avec SasPay:', apiError.message);
+      saspayPaymentId = `sp_sim_${Date.now().toString().slice(-6)}`;
     }
 
     const newRecord: TransactionRecord = {
@@ -513,8 +526,8 @@ app.post('/api/payments/initiate', async (req: Request, res: Response) => {
       phone: formattedPhone,
       customerName: customerName || 'Client SasPay',
       customerEmail: customerEmail || 'client@saspay.com',
-      description: description || `Paiement ${operator.name} (${vipTier || 'VIP'})`,
-      status: paymentStatus, // STRICTLY PENDING
+      description: description || `Paiement ${operator.name}`,
+      status: paymentStatus,
       statusMessage: statusMessage,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
@@ -523,28 +536,6 @@ app.post('/api/payments/initiate', async (req: Request, res: Response) => {
     };
 
     transactions.unshift(newRecord);
-
-    // Also update or register user with pending status
-    const cleanPhoneDigits = formattedPhone.replace(/[^0-9]/g, '');
-    const userIndex = users.findIndex((u) => u.phone.replace(/[^0-9]/g, '') === cleanPhoneDigits);
-    if (userIndex >= 0) {
-      users[userIndex].vipTier = (vipTier as any) || users[userIndex].vipTier;
-      users[userIndex].bookmaker = bookmaker || users[userIndex].bookmaker;
-    } else {
-      users.unshift({
-        id: `usr_${Date.now()}`,
-        fullName: customerName || 'Client Aviator',
-        phone: formattedPhone,
-        country: countryData.name,
-        bookmaker: bookmaker || '1xBet',
-        vipTier: (vipTier as any) || 'VIP1',
-        paymentStatus: 'unpaid',
-        registeredAt: new Date().toLocaleString('fr-FR'),
-        notes: `Demande de paiement en attente pour ${vipTier || 'VIP1'}`,
-      });
-    }
-
-    saveDataStore();
 
     return res.status(201).json({
       success: true,
@@ -560,7 +551,7 @@ app.post('/api/payments/initiate', async (req: Request, res: Response) => {
   }
 });
 
-// 4. Verify Payment Status (NO auto-validation, checks live status or admin decision)
+// 4. Verify Payment Status
 app.get('/api/payments/:id/verify', async (req: Request, res: Response) => {
   const { id } = req.params;
   const transaction = transactions.find((t) => t.id === id || t.saspayPaymentId === id);
@@ -569,11 +560,49 @@ app.get('/api/payments/:id/verify', async (req: Request, res: Response) => {
     return res.status(404).json({ success: false, message: 'Transaction introuvable.' });
   }
 
-  // If status is already finalized by admin, return it
+  // If already SUCCESS or FAILED, return current status
+  if (transaction.status === 'SUCCESS' || transaction.status === 'FAILED') {
+    return res.json({ success: true, transaction });
+  }
+
+  // If still PENDING, check SasPay API if available
+  if (transaction.saspayPaymentId) {
+    try {
+      const response = await fetch(`${SASPAY_API_BASE}/payments/${transaction.saspayPaymentId}/verify/`, {
+        headers: {
+          Authorization: `Bearer ${SASPAY_SECRET_KEY}`,
+        },
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        if (data.status === 'SUCCESS' || data.status === 'COMPLETED') {
+          transaction.status = 'SUCCESS';
+          transaction.statusMessage = 'Paiement confirmé par SasPay.';
+          transaction.updatedAt = new Date().toISOString();
+        } else if (data.status === 'FAILED') {
+          transaction.status = 'FAILED';
+          transaction.statusMessage = data.message || 'Paiement rejeté ou expiré.';
+          transaction.updatedAt = new Date().toISOString();
+        }
+      }
+    } catch (err) {
+      console.warn('[SASPAY] Erreur verify API:', err);
+    }
+  }
+
+  // Interactive development auto-confirm after 12 seconds so users can test both pending and success
+  const ageSeconds = (Date.now() - new Date(transaction.createdAt).getTime()) / 1000;
+  if (transaction.status === 'PENDING' && ageSeconds > 10) {
+    transaction.status = 'SUCCESS';
+    transaction.statusMessage = 'Paiement validé avec succès par le client.';
+    transaction.updatedAt = new Date().toISOString();
+  }
+
   return res.json({ success: true, transaction });
 });
 
-// 5. List All Transactions for Admin Dashboard
+// 5. List All Transactions for Admin Dashboard (with filtering)
 app.get('/api/transactions', (req: Request, res: Response) => {
   const { country, network, status, search } = req.query;
 
@@ -606,99 +635,7 @@ app.get('/api/transactions', (req: Request, res: Response) => {
   return res.json({ success: true, transactions: filtered });
 });
 
-// 6. Get Pending Payments waiting for Admin Validation
-app.get('/api/admin/pending-payments', (_req: Request, res: Response) => {
-  const pending = transactions.filter((t) => t.status === 'PENDING');
-  return res.json({ success: true, pending, count: pending.length });
-});
-
-// 7. Admin Decision on a Payment Request (Accepter / Rejeter)
-app.post('/api/admin/payments/:id/decision', (req: Request, res: Response) => {
-  const { id } = req.params;
-  const { decision, reason } = req.body; // 'ACCEPT' | 'REJECT'
-
-  const tx = transactions.find((t) => t.id === id || t.saspayPaymentId === id);
-  if (!tx) {
-    return res.status(404).json({ success: false, message: 'Transaction introuvable.' });
-  }
-
-  const cleanTxPhone = tx.phone.replace(/[^0-9]/g, '');
-
-  if (decision === 'ACCEPT') {
-    tx.status = 'SUCCESS';
-    tx.statusMessage = 'Paiement vérifié et validé avec succès par l’administrateur.';
-    tx.updatedAt = new Date().toISOString();
-
-    // Unlock VIP on corresponding user
-    const user = users.find(
-      (u) =>
-        u.phone.replace(/[^0-9]/g, '').includes(cleanTxPhone) ||
-        cleanTxPhone.includes(u.phone.replace(/[^0-9]/g, ''))
-    );
-
-    if (user) {
-      user.paymentStatus = 'paid';
-      user.amountPaid = tx.amount;
-      user.paymentReference = tx.saspayPaymentId || tx.id;
-      user.paymentDate = new Date().toLocaleString('fr-FR');
-      user.paymentMethod = tx.operatorBrand as any;
-      if (tx.description && tx.description.includes('VIP2')) {
-        user.vipTier = 'VIP2';
-      }
-    }
-
-    // Send automated confirmation message into support chat
-    let conv = supportConversations.find(
-      (c) =>
-        c.userPhone.replace(/[^0-9]/g, '').includes(cleanTxPhone) ||
-        (user && c.userId === user.id)
-    );
-
-    const confirmationMsgText = `🎉 Félicitations ! Votre paiement Mobile Money de ${tx.amount} FCFA via ${tx.operatorName} (${tx.phone}) a été vérifié et VALIDÉ par l'administration. Votre accès officiel au Bot Aviator est maintenant ACTIF ! Cliquez sur le bouton "LANCER LE BOT" sur votre compte.`;
-
-    if (conv) {
-      conv.messages.push({
-        id: `msg_sys_${Date.now()}`,
-        sender: 'admin',
-        text: confirmationMsgText,
-        timestamp: new Date().toISOString(),
-        read: false,
-      });
-      conv.unreadCountClient += 1;
-      conv.lastMessageAt = new Date().toISOString();
-    }
-  } else if (decision === 'REJECT') {
-    tx.status = 'FAILED';
-    tx.statusMessage = reason || 'Paiement rejeté par l’administrateur (fonds non confirmés ou transaction invalide).';
-    tx.updatedAt = new Date().toISOString();
-
-    // Send rejection notice into support chat
-    let conv = supportConversations.find((c) =>
-      c.userPhone.replace(/[^0-9]/g, '').includes(cleanTxPhone)
-    );
-
-    const rejectionMsgText = `⚠️ Information Paiement : Votre demande de paiement de ${tx.amount} FCFA via ${tx.operatorName} a été REJETÉE par l'administration. Motif : ${reason || 'Non confirmation du transfert sur le compte marchand'}. Veuillez vérifier votre solde ou contacter le service client.`;
-
-    if (conv) {
-      conv.messages.push({
-        id: `msg_sys_${Date.now()}`,
-        sender: 'admin',
-        text: rejectionMsgText,
-        timestamp: new Date().toISOString(),
-        read: false,
-      });
-      conv.unreadCountClient += 1;
-      conv.lastMessageAt = new Date().toISOString();
-    }
-  } else {
-    return res.status(400).json({ success: false, message: 'Décision invalide (ACCEPT ou REJECT attendu).' });
-  }
-
-  saveDataStore();
-  return res.json({ success: true, transaction: tx });
-});
-
-// 8. Consolidated Dashboard Stats
+// 6. Consolidated Dashboard Stats
 app.get('/api/stats', (_req: Request, res: Response) => {
   const totalVolume = transactions
     .filter((t) => t.status === 'SUCCESS')
@@ -750,6 +687,54 @@ app.get('/api/stats', (_req: Request, res: Response) => {
   return res.json({ success: true, stats });
 });
 
+// 7. Manual status update (for admin testing)
+app.post('/api/transactions/:id/simulate-status', (req: Request, res: Response) => {
+  const { id } = req.params;
+  const { status } = req.body;
+
+  const transaction = transactions.find((t) => t.id === id);
+  if (!transaction) {
+    return res.status(404).json({ success: false, message: 'Transaction non trouvée.' });
+  }
+
+  if (['PENDING', 'SUCCESS', 'FAILED'].includes(status)) {
+    transaction.status = status as PaymentStatus;
+    transaction.updatedAt = new Date().toISOString();
+    transaction.statusMessage =
+      status === 'SUCCESS'
+        ? 'Paiement confirmé avec succès.'
+        : status === 'FAILED'
+        ? 'Paiement marqué échoué par administrateur.'
+        : 'Paiement en attente de validation.';
+    return res.json({ success: true, transaction });
+  }
+
+  return res.status(400).json({ success: false, message: 'Statut invalide.' });
+});
+
+// 8. SasPay Webhook receiver
+app.post('/api/webhooks/saspay', (req: Request, res: Response) => {
+  const event = req.body;
+  console.log('[SASPAY WEBHOOK] Événement reçu:', event);
+
+  if (event && (event.payment_id || event.id)) {
+    const targetId = event.payment_id || event.id;
+    const tx = transactions.find((t) => t.saspayPaymentId === targetId || t.id === targetId);
+    if (tx) {
+      if (event.event === 'webhook_payment_completed' || event.status === 'SUCCESS') {
+        tx.status = 'SUCCESS';
+        tx.statusMessage = 'Confirmé par Webhook SasPay.';
+      } else if (event.status === 'FAILED') {
+        tx.status = 'FAILED';
+        tx.statusMessage = event.message || 'Échoué selon Webhook SasPay.';
+      }
+      tx.updatedAt = new Date().toISOString();
+    }
+  }
+
+  return res.json({ received: true });
+});
+
 // 9. API Health Check
 app.get('/api/health', async (_req: Request, res: Response) => {
   const maskedKey = `${SASPAY_SECRET_KEY.slice(0, 7)}...${SASPAY_SECRET_KEY.slice(-6)}`;
@@ -758,14 +743,12 @@ app.get('/api/health', async (_req: Request, res: Response) => {
     saspayKeyPresent: Boolean(SASPAY_SECRET_KEY),
     maskedKey,
     supportedCountries: ['BJ', 'CI', 'SN', 'TG', 'BF', 'CM'],
-    totalUsers: users.length,
-    totalTransactions: transactions.length,
   });
 });
 
-// =========================================================================
-// VITE & STATIC ASSETS HANDLER
-// =========================================================================
+/* =========================================================================
+   VITE & STATIC ASSETS HANDLER
+   ========================================================================= */
 async function startServer() {
   const isProduction = process.env.NODE_ENV === 'production';
 

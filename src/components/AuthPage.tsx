@@ -86,7 +86,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({
     onAuthSuccess(saved);
   };
 
-  const handleLogin = async (e: React.FormEvent) => {
+  const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage('');
 
@@ -96,32 +96,14 @@ export const AuthPage: React.FC<AuthPageProps> = ({
     }
 
     const cleanInput = loginPhone.replace(/[^0-9]/g, '');
-
-    // 1. Check server persistent database first
-    try {
-      const res = await fetch(`/api/users/by-phone/${cleanInput}`);
-      if (res.ok) {
-        const data = await res.json();
-        if (data.user) {
-          StorageService.setCurrentUser(data.user);
-          StorageService.addUser(data.user);
-          onAuthSuccess(data.user);
-          return;
-        }
-      }
-    } catch (err) {
-      console.warn('Vérification serveur:', err);
-    }
-
-    // 2. Fallback to local storage if offline
     const users = StorageService.getUsers();
-    const existing = users.find((u) => u.phone.replace(/[^0-9]/g, '').includes(cleanInput) || cleanInput.includes(u.phone.replace(/[^0-9]/g, '')));
+    const existing = users.find((u) => u.phone.replace(/[^0-9]/g, '').includes(cleanInput));
 
     if (existing) {
       StorageService.setCurrentUser(existing);
       onAuthSuccess(existing);
     } else {
-      // Create user if completely new
+      // Fast auto-connect for new customer phone
       const defaultUser: User = {
         id: `usr_${Date.now()}`,
         fullName: 'Client ' + (cleanInput.slice(-4) || 'VIP'),
