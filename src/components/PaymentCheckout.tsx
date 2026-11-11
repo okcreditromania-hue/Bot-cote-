@@ -80,10 +80,10 @@ export const PaymentCheckout: React.FC<PaymentCheckoutProps> = ({
       if (response.ok && data.success) {
         onPaymentInitiated(data.transaction);
       } else {
-        setErrorMessage(data.message || 'Impossible d’initier le paiement SasPay.');
+        setErrorMessage(data.message || 'Impossible d’initier le paiement Mobile Money.');
       }
     } catch (err: any) {
-      setErrorMessage(err.message || 'Erreur de connexion avec le serveur SasPay.');
+      setErrorMessage(err.message || 'Erreur de connexion avec le serveur de paiement.');
     } finally {
       setIsLoading(false);
     }
@@ -95,7 +95,7 @@ export const PaymentCheckout: React.FC<PaymentCheckoutProps> = ({
       <div className="text-center max-w-2xl mx-auto mb-10">
         <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-50 text-emerald-800 text-xs font-semibold border border-emerald-200 mb-3">
           <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
-          <span>SasPay Direct API · Sécurité Bancaire & MoMo</span>
+          <span>Passerelle Directe Mobile Money · Sécurité Bancaire & MoMo</span>
         </div>
         <h1 className="text-3xl sm:text-4xl font-extrabold text-slate-900 tracking-tight">
           Encaissement Mobile Money
@@ -296,13 +296,13 @@ export const PaymentCheckout: React.FC<PaymentCheckoutProps> = ({
               {isLoading ? (
                 <>
                   <div className="w-4 h-4 rounded-full border-2 border-white border-t-transparent animate-spin" />
-                  <span>Communication avec SasPay...</span>
+                  <span>Connexion avec le serveur de paiement...</span>
                 </>
               ) : (
                 <>
                   <Lock className="w-4 h-4" />
                   <span>
-                    Payer {parseFloat(amount || '0').toLocaleString()} {country.currency} via SasPay
+                    Payer {parseFloat(amount || '0').toLocaleString()} {country.currency} via Mobile Money
                   </span>
                   <ArrowRight className="w-4 h-4 ml-1" />
                 </>
@@ -317,7 +317,7 @@ export const PaymentCheckout: React.FC<PaymentCheckoutProps> = ({
           <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 space-y-4">
             <h3 className="text-sm font-bold uppercase tracking-wider text-slate-800 pb-3 border-b border-slate-100 flex items-center justify-between">
               <span>Récapitulatif de transaction</span>
-              <span className="text-xs font-mono text-emerald-700 font-bold">SasPay v1</span>
+              <span className="text-xs font-mono text-emerald-700 font-bold">Sécurisé</span>
             </h3>
 
             <div className="space-y-3 text-xs">
@@ -360,11 +360,11 @@ export const PaymentCheckout: React.FC<PaymentCheckoutProps> = ({
             </div>
           </div>
 
-          {/* SasPay Architecture & Trust */}
+          {/* Architecture & Trust */}
           <div className="bg-gradient-to-br from-slate-900 to-blue-950 rounded-2xl p-6 text-white space-y-4 shadow-sm">
             <div className="flex items-center gap-2 text-xs font-mono text-emerald-400">
               <Sparkles className="w-4 h-4" />
-              <span>TECHNOLOGIE SASPAY CONNECT</span>
+              <span>TECHNOLOGIE SÉCURISÉE MULTI-OPÉRATEURS</span>
             </div>
 
             <h4 className="text-base font-bold">
@@ -372,7 +372,7 @@ export const PaymentCheckout: React.FC<PaymentCheckoutProps> = ({
             </h4>
 
             <p className="text-xs text-slate-300 leading-relaxed">
-              Vos clés secrètes API SasPay sont strictement sécurisées sur le serveur avec chiffrement TLS et envoi du header <code>Idempotency-Key</code> pour éliminer tout risque de double débit.
+              Vos transactions sont strictement protégées avec chiffrement TLS et contrôle d'idempotence pour éliminer tout risque de double débit.
             </p>
 
             <div className="pt-2 grid grid-cols-2 gap-2 text-[11px] text-slate-300 font-mono">

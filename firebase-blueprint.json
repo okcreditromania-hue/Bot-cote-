@@ -1,0 +1,77 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "Utilisateur client inscrit pour le bot Aviator VIP",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "fullName": { "type": "string", "maxLength": 120 },
+        "phone": { "type": "string", "maxLength": 30 },
+        "country": { "type": "string", "maxLength": 50 },
+        "bookmaker": { "type": "string", "maxLength": 50 },
+        "vipTier": { "type": "string", "enum": ["VIP1", "VIP2"] },
+        "paymentStatus": { "type": "string", "enum": ["unpaid", "pending", "paid"] },
+        "amountPaid": { "type": "number" },
+        "paymentReference": { "type": "string", "maxLength": 128 },
+        "paymentMethod": { "type": "string", "maxLength": 50 },
+        "paymentDate": { "type": "string", "maxLength": 60 },
+        "registeredAt": { "type": "string", "maxLength": 60 },
+        "notes": { "type": "string", "maxLength": 500 }
+      },
+      "required": ["id", "fullName", "phone", "country", "bookmaker", "vipTier", "paymentStatus"]
+    },
+    "Transaction": {
+      "title": "Transaction",
+      "description": "Opération de paiement SasPay soumise pour validation administrative",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "saspayPaymentId": { "type": "string", "maxLength": 128 },
+        "amount": { "type": "number" },
+        "currency": { "type": "string", "maxLength": 10 },
+        "country": { "type": "string", "maxLength": 10 },
+        "countryName": { "type": "string", "maxLength": 50 },
+        "network": { "type": "string", "maxLength": 50 },
+        "operatorName": { "type": "string", "maxLength": 80 },
+        "phone": { "type": "string", "maxLength": 30 },
+        "customerName": { "type": "string", "maxLength": 120 },
+        "vipTier": { "type": "string", "maxLength": 20 },
+        "status": { "type": "string", "enum": ["PENDING", "SUCCESS", "FAILED"] },
+        "statusMessage": { "type": "string", "maxLength": 500 },
+        "createdAt": { "type": "string", "maxLength": 60 },
+        "updatedAt": { "type": "string", "maxLength": 60 }
+      },
+      "required": ["id", "amount", "country", "network", "phone", "status"]
+    },
+    "SupportConversation": {
+      "title": "SupportConversation",
+      "description": "Fil de discussion assistance entre client et administrateur",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "maxLength": 128 },
+        "userName": { "type": "string", "maxLength": 120 },
+        "userPhone": { "type": "string", "maxLength": 30 },
+        "userCountry": { "type": "string", "maxLength": 50 },
+        "lastMessageAt": { "type": "string", "maxLength": 60 },
+        "unreadCountClient": { "type": "number" },
+        "unreadCountAdmin": { "type": "number" }
+      },
+      "required": ["userId", "userName", "lastMessageAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/User" },
+      "description": "Comptes utilisateurs enregistrés"
+    },
+    "/transactions/{transactionId}": {
+      "schema": { "$ref": "#/entities/Transaction" },
+      "description": "Transactions et demandes de validation de paiement"
+    },
+    "/supportConversations/{conversationId}": {
+      "schema": { "$ref": "#/entities/SupportConversation" },
+      "description": "Conversations du service client"
+    }
+  }
+}

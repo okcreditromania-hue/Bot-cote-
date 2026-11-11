@@ -16,7 +16,7 @@ export const SupportedOperatorsSection: React.FC<SupportedOperatorsSectionProps>
         <div className="text-center max-w-3xl mx-auto mb-12">
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-blue-50 text-blue-700 text-xs font-semibold border border-blue-200 mb-3">
             <Smartphone className="w-3.5 h-3.5" />
-            <span>Couverture SasPay Afrique de l'Ouest & Centrale</span>
+            <span>Couverture Mobile Money Afrique de l'Ouest & Centrale</span>
           </div>
           <h2 className="text-2xl sm:text-3xl font-extrabold text-slate-900 tracking-tight">
             6 Pays & Opérateurs Mobile Money Activés

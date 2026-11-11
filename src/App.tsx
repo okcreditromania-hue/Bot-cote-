@@ -170,7 +170,7 @@ export default function App() {
                 <div className="flex items-center gap-2">
                   <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" />
                   <span className="font-mono text-slate-200">
-                    Console d'Administration SasPay · Connecté : <strong>34343434</strong>
+                    Console d'Administration Aviator VIP · Connecté : <strong>34343434</strong>
                   </span>
                 </div>
                 <button

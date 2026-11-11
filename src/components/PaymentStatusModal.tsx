@@ -66,7 +66,7 @@ export const PaymentStatusModal: React.FC<PaymentStatusModalProps> = ({
         <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50">
           <div className="flex items-center gap-2">
             <span className="text-base font-bold text-slate-900">
-              Statut de Paiement SasPay
+              Statut de Paiement Mobile Money
             </span>
             <span className="text-xs font-mono font-semibold px-2 py-0.5 rounded bg-slate-200 text-slate-700">
               {currentTx.country} · {currentTx.operatorBrand}
@@ -121,7 +121,7 @@ export const PaymentStatusModal: React.FC<PaymentStatusModalProps> = ({
               </div>
 
               <div className="text-[11px] font-mono text-slate-400">
-                Synchronisation SasPay API en direct (essai #{pollCount + 1})...
+                Synchronisation réseau opérateur en direct (essai #{pollCount + 1})...
               </div>
             </div>
           ) : currentTx.status === 'SUCCESS' ? (
@@ -140,7 +140,7 @@ export const PaymentStatusModal: React.FC<PaymentStatusModalProps> = ({
                   {currentTx.amount.toLocaleString()} {currentTx.currency}
                 </h3>
                 <p className="text-xs text-slate-500">
-                  Encaissé via {currentTx.operatorName} · Réf SasPay :{' '}
+                  Encaissé via {currentTx.operatorName} · Réf Opérateur :{' '}
                   <span className="font-mono text-slate-700 font-bold">
                     {currentTx.saspayPaymentId}
                   </span>

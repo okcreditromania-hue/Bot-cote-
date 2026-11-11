@@ -178,7 +178,7 @@ export const SupportChatWidget: React.FC<SupportChatWidgetProps> = ({ currentUse
               <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
               Assistance officielle Mobile Money & VIP
             </span>
-            <span className="font-mono text-[10px] font-bold text-slate-400">SasPay Live</span>
+            <span className="font-mono text-[10px] font-bold text-slate-400">Direct MoMo</span>
           </div>
 
           {/* Messages Area */}

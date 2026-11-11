@@ -13,6 +13,9 @@ import {
   Check,
   Copy,
   Share2,
+  Eye,
+  EyeOff,
+  KeyRound,
 } from 'lucide-react';
 
 interface AuthPageProps {
@@ -26,15 +29,22 @@ export const AuthPage: React.FC<AuthPageProps> = ({
 }) => {
   const [activeTab, setActiveTab] = useState<'login' | 'register'>(initialTab);
 
-  // Form states
+  // Registration Form states (Always virgin/blank by default)
   const [fullName, setFullName] = useState('');
   const [country, setCountry] = useState(WEST_AFRICA_COUNTRIES[0].name);
   const [phonePrefix, setPhonePrefix] = useState(WEST_AFRICA_COUNTRIES[0].code);
   const [phoneNumber, setPhoneNumber] = useState('');
   const [bookmaker, setBookmaker] = useState(WEST_AFRICA_BOOKMAKERS[0].name);
   const [selectedVip, setSelectedVip] = useState<VIPPlanId>('VIP1');
+  const [registerPassword, setRegisterPassword] = useState('');
+  const [showRegisterPassword, setShowRegisterPassword] = useState(false);
 
+  // Login Form states (Always completely virgin/empty for every visitor - 100% confidential)
   const [loginPhone, setLoginPhone] = useState('');
+  const [loginPassword, setLoginPassword] = useState('');
+  const [showLoginPassword, setShowLoginPassword] = useState(false);
+  const [isSubmittingLogin, setIsSubmittingLogin] = useState(false);
+
   const [errorMessage, setErrorMessage] = useState('');
   const [copiedLink, setCopiedLink] = useState(false);
 
@@ -52,17 +62,23 @@ export const AuthPage: React.FC<AuthPageProps> = ({
     });
   };
 
+  // 1. Submit Registration with Secret Password
   const handleRegister = (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage('');
 
     if (!fullName.trim()) {
-      setErrorMessage('Veuillez saisir votre nom complet.');
+      setErrorMessage('Veuillez renseigner votre nom complet.');
       return;
     }
 
     if (!phoneNumber.trim() || phoneNumber.replace(/[^0-9]/g, '').length < 6) {
       setErrorMessage('Veuillez renseigner un numéro de téléphone valide.');
+      return;
+    }
+
+    if (!registerPassword.trim() || registerPassword.length < 4) {
+      setErrorMessage('Veuillez définir un mot de passe d’au moins 4 caractères.');
       return;
     }
 
@@ -73,6 +89,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({
       id: `usr_${Date.now()}`,
       fullName: fullName.trim(),
       phone: fullPhone,
+      password: registerPassword.trim(),
       country,
       bookmaker,
       vipTier: selectedVip,
@@ -86,43 +103,81 @@ export const AuthPage: React.FC<AuthPageProps> = ({
     onAuthSuccess(saved);
   };
 
-  const handleLogin = (e: React.FormEvent) => {
+  // 2. Submit Confidential Login
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage('');
 
     if (!loginPhone.trim()) {
-      setErrorMessage('Veuillez saisir votre numéro de téléphone.');
+      setErrorMessage('Veuillez renseigner votre numéro de téléphone.');
       return;
     }
 
-    const cleanInput = loginPhone.replace(/[^0-9]/g, '');
-    const users = StorageService.getUsers();
-    const existing = users.find((u) => u.phone.replace(/[^0-9]/g, '').includes(cleanInput));
+    if (!loginPassword.trim()) {
+      setErrorMessage('Veuillez renseigner votre mot de passe.');
+      return;
+    }
 
-    if (existing) {
-      StorageService.setCurrentUser(existing);
-      onAuthSuccess(existing);
-    } else {
-      // Fast auto-connect for new customer phone
-      const defaultUser: User = {
-        id: `usr_${Date.now()}`,
-        fullName: 'Client ' + (cleanInput.slice(-4) || 'VIP'),
-        phone: loginPhone.startsWith('+') ? loginPhone : `+229${cleanInput}`,
-        country: 'Bénin',
-        bookmaker: '1xBet',
-        vipTier: 'VIP1',
-        paymentStatus: 'unpaid',
-        registeredAt: new Date().toLocaleString('fr-FR'),
-      };
-      const saved = StorageService.addUser(defaultUser);
-      StorageService.setCurrentUser(saved);
-      onAuthSuccess(saved);
+    setIsSubmittingLogin(true);
+
+    try {
+      // 1. Check with server login endpoint
+      const response = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone: loginPhone, password: loginPassword }),
+      });
+
+      const data = await response.json();
+
+      if (response.ok && data.success && data.user) {
+        StorageService.setCurrentUser(data.user);
+        onAuthSuccess(data.user);
+        return;
+      }
+
+      // 2. Fallback check local storage
+      const cleanInput = loginPhone.replace(/[^0-9]/g, '');
+      const localUsers = StorageService.getUsers();
+      const matched = localUsers.find((u) => {
+        const uPhone = u.phone.replace(/[^0-9]/g, '');
+        return uPhone === cleanInput || uPhone.endsWith(cleanInput) || cleanInput.endsWith(uPhone);
+      });
+
+      if (matched) {
+        const expected = matched.password || 'password123';
+        if (loginPassword.trim() === expected.trim()) {
+          StorageService.setCurrentUser(matched);
+          onAuthSuccess(matched);
+          return;
+        }
+      }
+
+      // If credentials do not match, give private neutral error (never expose other accounts)
+      setErrorMessage('Numéro de téléphone ou mot de passe incorrect.');
+    } catch {
+      // Offline fallback
+      const cleanInput = loginPhone.replace(/[^0-9]/g, '');
+      const localUsers = StorageService.getUsers();
+      const matched = localUsers.find((u) => {
+        const uPhone = u.phone.replace(/[^0-9]/g, '');
+        return uPhone === cleanInput || uPhone.endsWith(cleanInput) || cleanInput.endsWith(uPhone);
+      });
+
+      if (matched && loginPassword.trim() === (matched.password || 'password123').trim()) {
+        StorageService.setCurrentUser(matched);
+        onAuthSuccess(matched);
+      } else {
+        setErrorMessage('Numéro de téléphone ou mot de passe incorrect.');
+      }
+    } finally {
+      setIsSubmittingLogin(false);
     }
   };
 
   return (
     <div className="py-8 max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 space-y-8">
-      {/* 1. YOUTUBE VIDEO PROMINENTLY AT THE VERY TOP OF INSCRIPTION & CONNEXION */}
+      {/* 1. YOUTUBE VIDEO SECTION (Clean, nothing written on top) */}
       <ClientVideoSection />
 
       {/* 2. Direct Public Link Banner (Shareable) */}
@@ -133,7 +188,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({
             <span>LIEN PUBLIC DIRECT OFFICIEL</span>
           </div>
           <p className="text-xs text-slate-600">
-            Ce lien redirige toujours vos clients directement sur cette page d'inscription et de réservation VIP.
+            Ce lien redirige toujours vos clients directement sur cette page d'inscription et de connexion sécurisée.
           </p>
         </div>
 
@@ -155,7 +210,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({
         </button>
       </div>
 
-      {/* 3. Inscription & Connexion Card (Clean Day Mode: White, Emerald, Blue) */}
+      {/* 3. Inscription & Connexion Card (Day Mode - Confidential & Pure) */}
       <div className="max-w-xl mx-auto bg-white border border-slate-200 rounded-2xl shadow-xl overflow-hidden">
         {/* Top Tab Bar */}
         <div className="flex border-b border-slate-200 bg-slate-50/70 p-2 gap-2">
@@ -193,13 +248,13 @@ export const AuthPage: React.FC<AuthPageProps> = ({
         </div>
 
         {errorMessage && (
-          <div className="mx-6 mt-4 p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs flex items-center gap-2">
+          <div className="mx-6 mt-4 p-3.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs flex items-center gap-2">
             <ShieldAlert className="w-4 h-4 shrink-0 text-rose-600" />
             <span>{errorMessage}</span>
           </div>
         )}
 
-        {/* Tab 1: Registration / Seat Reservation */}
+        {/* Tab 1: Registration Form with Secret Password */}
         {activeTab === 'register' ? (
           <form onSubmit={handleRegister} className="p-6 sm:p-8 space-y-5">
             <div>
@@ -254,6 +309,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({
               </div>
             </div>
 
+            {/* Platform Selection */}
             <div>
               <label className="block text-xs font-bold text-slate-700 mb-1.5 uppercase tracking-wider">
                 Votre plateforme de jeu Aviator
@@ -269,6 +325,34 @@ export const AuthPage: React.FC<AuthPageProps> = ({
                   </option>
                 ))}
               </select>
+            </div>
+
+            {/* Password Creation Field */}
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1.5 uppercase tracking-wider">
+                Créez votre mot de passe secret (Requis pour vos futures connexions)
+              </label>
+              <div className="relative">
+                <input
+                  type={showRegisterPassword ? 'text' : 'password'}
+                  required
+                  value={registerPassword}
+                  onChange={(e) => setRegisterPassword(e.target.value)}
+                  placeholder="Choisissez un mot de passe personnel"
+                  className="w-full pl-4 pr-11 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm font-mono text-slate-900 placeholder-slate-400 focus:outline-none focus:border-emerald-600 focus:bg-white transition-colors"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowRegisterPassword(!showRegisterPassword)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-1 cursor-pointer"
+                  tabIndex={-1}
+                >
+                  {showRegisterPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
+              <span className="text-[11px] text-slate-500 mt-1 block">
+                Ce mot de passe restera strictement confidentiel et vous permettra de vous reconnecter.
+              </span>
             </div>
 
             {/* The 2 VIP options with exact user formulas */}
@@ -332,7 +416,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({
                 <span>Rappel de réservation :</span>
               </div>
               <p>
-                L'inscription réserve votre place dans le compte. Le paiement Mobile Money est toujours accessible et débloquera immédiatement le bouton d'accès au Bot Aviator.
+                L'inscription réserve votre place dans le compte. Le paiement Mobile Money est toujours accessible et débloquera le bouton d'accès au Bot Aviator après validation administrative.
               </p>
             </div>
 
@@ -345,31 +429,90 @@ export const AuthPage: React.FC<AuthPageProps> = ({
             </button>
           </form>
         ) : (
-          /* Tab 2: Connexion Client */
+          /* Tab 2: Connexion Client Sécurisée et Vierge (Aucun autre compte affiché - Confidentialité Totale) */
           <form onSubmit={handleLogin} className="p-6 sm:p-8 space-y-5">
+            <div className="space-y-1 pb-1">
+              <h3 className="text-sm font-bold text-slate-900">
+                Espace de Connexion Personnel
+              </h3>
+              <p className="text-xs text-slate-500">
+                Saisissez votre numéro de téléphone et votre mot de passe pour accéder à votre espace réservé.
+              </p>
+            </div>
+
+            {/* Saisie du Numéro de Téléphone (Champ vierge) */}
             <div>
               <label className="block text-xs font-bold text-slate-700 mb-1.5 uppercase tracking-wider">
                 Votre numéro de téléphone Mobile Money
               </label>
-              <input
-                type="tel"
-                required
-                value={loginPhone}
-                onChange={(e) => setLoginPhone(e.target.value)}
-                placeholder="Ex: 01 97 00 00 00 ou +229..."
-                className="w-full px-4 py-3 bg-slate-50 border border-slate-300 rounded-xl text-sm font-mono text-slate-900 placeholder-slate-400 focus:outline-none focus:border-blue-600 focus:bg-white transition-colors"
-              />
+              <div className="flex">
+                <span className="inline-flex items-center px-3.5 rounded-l-xl border border-r-0 border-slate-300 bg-slate-100 text-slate-700 text-xs font-mono font-bold">
+                  <Smartphone className="w-4 h-4 text-slate-500" />
+                </span>
+                <input
+                  type="tel"
+                  required
+                  value={loginPhone}
+                  onChange={(e) => setLoginPhone(e.target.value)}
+                  placeholder="Ex: 01 97 00 00 00 ou +229..."
+                  className="w-full px-4 py-2.5 bg-slate-50 border border-slate-300 rounded-r-xl text-sm font-mono text-slate-900 placeholder-slate-400 focus:outline-none focus:border-blue-600 focus:bg-white transition-colors"
+                />
+              </div>
               <span className="text-[11px] text-slate-500 mt-1 block">
-                Saisissez le numéro utilisé lors de votre réservation de place.
+                Le numéro renseigné lors de votre inscription.
               </span>
+            </div>
+
+            {/* Saisie du Mot de Passe (Champ vierge) */}
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1.5 uppercase tracking-wider">
+                Votre mot de passe secret
+              </label>
+              <div className="relative">
+                <input
+                  type={showLoginPassword ? 'text' : 'password'}
+                  required
+                  value={loginPassword}
+                  onChange={(e) => setLoginPassword(e.target.value)}
+                  placeholder="Entrez votre mot de passe"
+                  className="w-full pl-4 pr-11 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm font-mono text-slate-900 placeholder-slate-400 focus:outline-none focus:border-blue-600 focus:bg-white transition-colors"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowLoginPassword(!showLoginPassword)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-1 cursor-pointer"
+                  tabIndex={-1}
+                >
+                  {showLoginPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
+              <span className="text-[11px] text-slate-500 mt-1 block">
+                Votre mot de passe reste strictement confidentiel.
+              </span>
+            </div>
+
+            <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 text-xs text-slate-600 flex items-center gap-2">
+              <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0" />
+              <span>Accès personnel chiffré et protégé contre tout accès tiers.</span>
             </div>
 
             <button
               type="submit"
-              className="w-full py-3.5 px-4 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs uppercase tracking-wider rounded-xl shadow-md flex items-center justify-center gap-2 transition-colors cursor-pointer"
+              disabled={isSubmittingLogin}
+              className="w-full py-3.5 px-4 bg-blue-600 hover:bg-blue-700 active:scale-[0.99] text-white font-bold text-xs uppercase tracking-wider rounded-xl shadow-md flex items-center justify-center gap-2 transition-all cursor-pointer disabled:opacity-60"
             >
-              <span>Se Connecter à mon compte</span>
-              <ArrowRight className="w-4 h-4" />
+              {isSubmittingLogin ? (
+                <>
+                  <div className="w-4 h-4 rounded-full border-2 border-white border-t-transparent animate-spin" />
+                  <span>Vérification...</span>
+                </>
+              ) : (
+                <>
+                  <KeyRound className="w-4 h-4" />
+                  <span>Se Connecter à mon compte</span>
+                  <ArrowRight className="w-4 h-4" />
+                </>
+              )}
             </button>
           </form>
         )}

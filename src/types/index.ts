@@ -6,6 +6,7 @@ export interface User {
   id: string;
   fullName: string;
   phone: string;
+  password?: string;
   country: string;
   bookmaker: string;
   vipTier: VIPPlanId;

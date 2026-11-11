@@ -1,0 +1,221 @@
+{
+  "users": [
+    {
+      "id": "usr_1794400619251",
+      "fullName": "Yacouba Koné",
+      "phone": "+2250708091011",
+      "country": "Côte d’Ivoire",
+      "bookmaker": "1xBet",
+      "vipTier": "VIP2",
+      "paymentStatus": "unpaid",
+      "registeredAt": "11/11/2026 12:36:59",
+      "notes": "Demande de paiement en attente pour VIP2"
+    },
+    {
+      "id": "usr_1794400578424",
+      "fullName": "Jean-Luc Akpo",
+      "phone": "+2290197001122",
+      "country": "Bénin",
+      "bookmaker": "1xBet",
+      "vipTier": "VIP1",
+      "paymentStatus": "paid",
+      "registeredAt": "11/11/2026 12:36:18",
+      "notes": "Demande de paiement en attente pour VIP1",
+      "amountPaid": 550,
+      "paymentReference": "9b4bc85b-0d0c-4606-b64d-2c038694d8ff",
+      "paymentDate": "11/11/2026 13:01:11",
+      "paymentMethod": "MTN"
+    },
+    {
+      "id": "usr_1794345796339",
+      "fullName": "Alain Agossou",
+      "phone": "+2290197887766",
+      "country": "Bénin",
+      "bookmaker": "1xBet",
+      "vipTier": "VIP1",
+      "paymentStatus": "paid",
+      "registeredAt": "10/11/2026 21:23:16",
+      "notes": "Inscription pour le VIP1",
+      "amountPaid": 550,
+      "paymentReference": "32a2c374-ac0c-4745-bb3c-c4e3e62d685c",
+      "paymentDate": "10/11/2026 21:23:32",
+      "paymentMethod": "MTN"
+    }
+  ],
+  "transactions": [
+    {
+      "id": "tx_1794402062765",
+      "saspayPaymentId": "9b4bc85b-0d0c-4606-b64d-2c038694d8ff",
+      "amount": 550,
+      "currency": "XOF",
+      "country": "BJ",
+      "countryName": "Bénin",
+      "network": "mtn_bj",
+      "operatorName": "MTN Mobile Money",
+      "operatorBrand": "MTN",
+      "phone": "+2290197001122",
+      "customerName": "Test Momo",
+      "customerEmail": "test@gmail.com",
+      "description": "VIP1",
+      "status": "SUCCESS",
+      "statusMessage": "Paiement vérifié et validé avec succès par l’administrateur.",
+      "createdAt": "2026-11-11T13:01:04.804Z",
+      "updatedAt": "2026-11-11T13:01:11.803Z",
+      "idempotencyKey": "idem_1794402062765_vvc8um",
+      "apiResponse": {
+        "success": true,
+        "data": {
+          "message": "Payment pushed successfully",
+          "id": "9b4bc85b-0d0c-4606-b64d-2c038694d8ff",
+          "status": "PENDING",
+          "checkout_url": "",
+          "instructions": [
+            "Accepted"
+          ],
+          "bank_transfer": {}
+        },
+        "code": 201
+      }
+    },
+    {
+      "id": "tx_1794400617342",
+      "saspayPaymentId": "a06ed15d-d41f-49d1-8483-f23354e2d5e1",
+      "amount": 1500,
+      "currency": "XOF",
+      "country": "CI",
+      "countryName": "Côte d’Ivoire",
+      "network": "orange_ci",
+      "operatorName": "Orange Money CI",
+      "operatorBrand": "ORANGE",
+      "phone": "+2250708091011",
+      "customerName": "Yacouba Koné",
+      "customerEmail": "client@saspay.com",
+      "description": "Paiement VIP2 Bot Aviator (1500 FCFA)",
+      "status": "FAILED",
+      "statusMessage": "Solde insuffisant constaté sur le numéro",
+      "createdAt": "2026-11-11T12:36:59.251Z",
+      "updatedAt": "2026-11-11T12:37:23.724Z",
+      "idempotencyKey": "idem_1794400617342_p4d84p",
+      "apiResponse": {
+        "success": true,
+        "data": {
+          "message": "Payment pushed successfully",
+          "id": "a06ed15d-d41f-49d1-8483-f23354e2d5e1",
+          "status": "PENDING",
+          "checkout_url": "https://mpayment.orange-money.com/ci/mpayment/abstract/v1kbd72cnevqdhpsemmy9tdvpvjab7rsb38x3lswu9dl1yujnajowku6zisgwtpe",
+          "instructions": [
+            "Payment pushed successfully"
+          ],
+          "bank_transfer": {}
+        },
+        "code": 201
+      }
+    },
+    {
+      "id": "tx_1794400576181",
+      "saspayPaymentId": "9708bcc5-bf5e-4ab6-8d3d-b15c4c7099d9",
+      "amount": 550,
+      "currency": "XOF",
+      "country": "BJ",
+      "countryName": "Bénin",
+      "network": "mtn_bj",
+      "operatorName": "MTN Mobile Money",
+      "operatorBrand": "MTN",
+      "phone": "+2290197001122",
+      "customerName": "Jean-Luc Akpo",
+      "customerEmail": "client@saspay.com",
+      "description": "Paiement VIP1 Bot Aviator (550 FCFA)",
+      "status": "SUCCESS",
+      "statusMessage": "Paiement vérifié et validé avec succès par l’administrateur.",
+      "createdAt": "2026-11-11T12:36:18.424Z",
+      "updatedAt": "2026-11-11T12:36:30.017Z",
+      "idempotencyKey": "idem_1794400576181_bmn2qc",
+      "apiResponse": {
+        "success": true,
+        "data": {
+          "message": "Payment pushed successfully",
+          "id": "9708bcc5-bf5e-4ab6-8d3d-b15c4c7099d9",
+          "status": "PENDING",
+          "checkout_url": "",
+          "instructions": [
+            "Accepted"
+          ],
+          "bank_transfer": {}
+        },
+        "code": 201
+      }
+    },
+    {
+      "id": "tx_1794345803118",
+      "saspayPaymentId": "32a2c374-ac0c-4745-bb3c-c4e3e62d685c",
+      "amount": 550,
+      "currency": "XOF",
+      "country": "BJ",
+      "countryName": "Bénin",
+      "network": "mtn_bj",
+      "operatorName": "MTN Mobile Money",
+      "operatorBrand": "MTN",
+      "phone": "+2290197887766",
+      "customerName": "Alain Agossou",
+      "customerEmail": "client@saspay.com",
+      "description": "Paiement VIP 1 Bot Aviator (550 FCFA)",
+      "status": "SUCCESS",
+      "statusMessage": "Paiement vérifié et validé avec succès par l’administrateur.",
+      "createdAt": "2026-11-10T21:23:25.396Z",
+      "updatedAt": "2026-11-10T21:23:32.140Z",
+      "idempotencyKey": "idem_1794345803118_65qc26",
+      "apiResponse": {
+        "success": true,
+        "data": {
+          "message": "Payment pushed successfully",
+          "id": "32a2c374-ac0c-4745-bb3c-c4e3e62d685c",
+          "status": "PENDING",
+          "checkout_url": "",
+          "instructions": [
+            "Accepted"
+          ],
+          "bank_transfer": {}
+        },
+        "code": 201
+      }
+    }
+  ],
+  "supportConversations": [
+    {
+      "userId": "guest_visitor",
+      "userName": "Visiteur Client",
+      "userPhone": "",
+      "userCountry": "Bénin",
+      "lastMessageAt": "2026-11-11T12:54:57.284Z",
+      "unreadCountClient": 1,
+      "unreadCountAdmin": 0,
+      "messages": [
+        {
+          "id": "msg_welcome_1794401697284",
+          "sender": "admin",
+          "text": "Bonjour et bienvenue sur le Service Client AVIATOR PREDICTOR VIP PRO ! Notre équipe est connectée pour valider vos paiements et répondre à vos questions.",
+          "timestamp": "2026-11-11T12:54:57.284Z",
+          "read": false
+        }
+      ]
+    },
+    {
+      "userId": "usr_1794342446449",
+      "userName": "Haba olih",
+      "userPhone": "+2290169644023",
+      "userCountry": "Bénin",
+      "lastMessageAt": "2026-11-11T12:32:38.404Z",
+      "unreadCountClient": 1,
+      "unreadCountAdmin": 0,
+      "messages": [
+        {
+          "id": "msg_welcome_1794400358404",
+          "sender": "admin",
+          "text": "Bonjour et bienvenue sur le Service Client AVIATOR PREDICTOR VIP PRO ! Notre équipe est connectée pour valider vos paiements et répondre à vos questions.",
+          "timestamp": "2026-11-11T12:32:38.404Z",
+          "read": false
+        }
+      ]
+    }
+  ]
+}

@@ -7,7 +7,7 @@ export const WEST_AFRICA_BOOKMAKERS: BookmakerPlatform[] = [
     badge: 'N°1 Afrique de l\'Ouest',
     minDeposit: '500 FCFA',
     rating: '4.9/5',
-    aviatorGameName: 'Aviator Spribe & Crash',
+    aviatorGameName: 'Jeu Aviator Spribe',
     popularCountries: ['Bénin', 'Côte d\'Ivoire', 'Sénégal', 'Cameroun', 'Mali'],
     color: 'from-blue-600 to-sky-500',
   },
@@ -17,7 +17,7 @@ export const WEST_AFRICA_BOOKMAKERS: BookmakerPlatform[] = [
     badge: 'Leader Historique',
     minDeposit: '300 FCFA',
     rating: '4.8/5',
-    aviatorGameName: 'Aviator & The Navigator',
+    aviatorGameName: 'Jeu Aviator Spribe',
     popularCountries: ['Côte d\'Ivoire', 'Mali', 'Sénégal', 'RD Congo'],
     color: 'from-emerald-600 to-green-500',
   },
@@ -27,7 +27,7 @@ export const WEST_AFRICA_BOOKMAKERS: BookmakerPlatform[] = [
     badge: 'Ultra Rapide MoMo',
     minDeposit: '500 FCFA',
     rating: '4.8/5',
-    aviatorGameName: 'Aviator Spribe Original',
+    aviatorGameName: 'Jeu Aviator Spribe',
     popularCountries: ['Bénin', 'Togo', 'Burkina Faso', 'Côte d\'Ivoire'],
     color: 'from-amber-600 to-yellow-500',
   },
@@ -37,7 +37,7 @@ export const WEST_AFRICA_BOOKMAKERS: BookmakerPlatform[] = [
     badge: 'Hautes Cotes Spribe',
     minDeposit: '500 FCFA',
     rating: '4.7/5',
-    aviatorGameName: 'Aviator & Spribe Games',
+    aviatorGameName: 'Jeu Aviator Spribe',
     popularCountries: ['Cameroun', 'Sénégal', 'Bénin', 'Mali'],
     color: 'from-amber-500 to-orange-500',
   },
@@ -47,19 +47,9 @@ export const WEST_AFRICA_BOOKMAKERS: BookmakerPlatform[] = [
     badge: 'Retraits Instantanés',
     minDeposit: '450 FCFA',
     rating: '4.7/5',
-    aviatorGameName: 'Aviator Crash Pro',
+    aviatorGameName: 'Jeu Aviator Spribe',
     popularCountries: ['Côte d\'Ivoire', 'Sénégal', 'Guinée', 'Bénin'],
     color: 'from-teal-600 to-emerald-500',
-  },
-  {
-    id: '1win',
-    name: '1win',
-    badge: 'Bonus Dépôt 500%',
-    minDeposit: '1 000 FCFA',
-    rating: '4.6/5',
-    aviatorGameName: 'Lucky Jet & Aviator',
-    popularCountries: ['Bénin', 'Côte d\'Ivoire', 'Sénégal', 'Togo'],
-    color: 'from-indigo-600 to-purple-500',
   },
 ];
 
@@ -147,6 +137,7 @@ const INITIAL_DEMO_USERS: User[] = [
     id: 'usr_001',
     fullName: 'Moussa Traoré',
     phone: '+2250708091011',
+    password: 'password123',
     country: 'Côte d\'Ivoire',
     bookmaker: '1xBet',
     vipTier: 'VIP1',
@@ -162,6 +153,7 @@ const INITIAL_DEMO_USERS: User[] = [
     id: 'usr_002',
     fullName: 'Koffi Mensah',
     phone: '+22997123456',
+    password: 'password123',
     country: 'Bénin',
     bookmaker: 'Paripesa',
     vipTier: 'VIP1',
@@ -177,6 +169,7 @@ const INITIAL_DEMO_USERS: User[] = [
     id: 'usr_003',
     fullName: 'Abdoulaye Diallo',
     phone: '+221776543210',
+    password: 'password123',
     country: 'Sénégal',
     bookmaker: 'Premier Bet',
     vipTier: 'VIP2',
@@ -216,7 +209,7 @@ export const INITIAL_SIGNALS: LiveSignal[] = [
   },
   {
     id: 'sig_4',
-    game: 'Melbet Spribe',
+    game: 'Melbet Aviator',
     predictedMultiplier: '3.15x',
     safetyCashout: '2.50x',
     probability: '97.4%',
@@ -240,7 +233,11 @@ export const StorageService = {
         localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(INITIAL_DEMO_USERS));
         return INITIAL_DEMO_USERS;
       }
-      return JSON.parse(data);
+      const parsed: User[] = JSON.parse(data);
+      return parsed.map((u) => ({
+        ...u,
+        password: u.password || 'password123',
+      }));
     } catch {
       return INITIAL_DEMO_USERS;
     }
