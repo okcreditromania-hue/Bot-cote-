@@ -5,7 +5,7 @@ import fs from 'fs';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
 import type { CountryCode, OperatorId, PaymentStatus, TransactionCategory, TransactionRecord, DashboardStats } from './src/types/saspay.ts';
-import { SUPPORTED_COUNTRIES } from './src/data/countries.ts';
+import { SUPPORTED_COUNTRIES, resolveCountryCode } from './src/data/countries.ts';
 import type { User, ClientOperation, AviatorRoundHistoryItem, AviatorActiveBet, AviatorGameState } from './src/types/index.ts';
 
 dotenv.config();
@@ -566,24 +566,33 @@ app.post('/api/auth/login', (req: Request, res: Response) => {
   return res.json({ success: true, isAdmin: false, user });
 });
 
-// 1.c Register user endpoint (guarantees persistent server storage with password & betting ID)
+// 1.c Register user endpoint (guarantees persistent server storage with phone-only required fields + immutable betting ID if set)
 app.post('/api/auth/register', (req: Request, res: Response) => {
   const { fullName, phone, password, country, bookmaker, bookmakerUserId, vipTier } = req.body;
-  if (!phone || !password || !fullName) {
-    return res.status(400).json({ success: false, message: 'Nom complet, numéro et mot de passe requis.' });
+  if (!phone || !password) {
+    return res.status(400).json({ success: false, message: 'Numéro de téléphone et mot de passe requis.' });
   }
 
   const existingIndex = users.findIndex((u) => isSamePhoneNumber(u.phone, String(phone)));
+  const cleanPhoneDigits = String(phone).replace(/[^0-9]/g, '');
+  const resolvedFullName =
+    String(fullName || '').trim() ||
+    (existingIndex >= 0 ? users[existingIndex].fullName : '') ||
+    `Client ${cleanPhoneDigits.slice(-4) || 'Aviator'}`;
   const cleanBookmakerId = bookmakerUserId ? String(bookmakerUserId).trim() : undefined;
+  const lockedBookmakerId =
+    existingIndex >= 0 && users[existingIndex].bookmakerUserId
+      ? users[existingIndex].bookmakerUserId
+      : cleanBookmakerId;
 
   const newUser: User = {
     id: existingIndex >= 0 ? users[existingIndex].id : `usr_${Date.now()}`,
-    fullName: String(fullName).trim(),
+    fullName: resolvedFullName,
     phone: String(phone).trim(),
     password: String(password).trim(),
     country: country || 'Bénin',
     bookmaker: bookmaker || '1xBet',
-    bookmakerUserId: cleanBookmakerId || (existingIndex >= 0 ? users[existingIndex].bookmakerUserId : undefined),
+    bookmakerUserId: lockedBookmakerId,
     vipTier: (vipTier as any) || 'VIP1',
     paymentStatus: existingIndex >= 0 ? users[existingIndex].paymentStatus : 'unpaid',
     balance: existingIndex >= 0 ? (users[existingIndex].balance ?? 0) : 0,
@@ -1024,13 +1033,6 @@ app.get('/api/countries', (_req: Request, res: Response) => {
 // 3. Initiate Mobile Money Payment / Recharge (Strict userId binding + No anonymous payment + Admin confirmation required)
 const UEMOA_PREFIXES = ['229', '226', '225', '245', '223', '227', '221', '228'];
 
-function normalizeBettingSiteId(val?: string): string {
-  return String(val || '')
-    .replace(/[\s\-_]+/g, '')
-    .trim()
-    .toUpperCase();
-}
-
 app.post('/api/payments/initiate', async (req: Request, res: Response) => {
   try {
     const {
@@ -1054,21 +1056,15 @@ app.post('/api/payments/initiate', async (req: Request, res: Response) => {
     const cleanCustomerName = String(customerName || '').trim();
     const cleanPhoneDigits = String(phone || '').replace(/[^0-9]/g, '');
 
-    if (cleanCustomerName.length < 2) {
+    if (!amount || cleanPhoneDigits.length < 7) {
       return res.status(400).json({
         success: false,
-        message: 'Veuillez obligatoirement saisir votre nom complet avant de procéder au paiement.',
+        message: 'Veuillez renseigner un numéro Mobile Money valide.',
       });
     }
 
-    if (!amount || !country || cleanPhoneDigits.length < 7) {
-      return res.status(400).json({
-        success: false,
-        message: 'Veuillez renseigner un pays, un réseau actif et votre numéro Mobile Money valide.',
-      });
-    }
-
-    const countryData = SUPPORTED_COUNTRIES[country as CountryCode];
+    const resolvedCountryCode: CountryCode = resolveCountryCode(country);
+    const countryData = SUPPORTED_COUNTRIES[resolvedCountryCode];
     if (!countryData) {
       return res.status(400).json({ success: false, message: 'Pays sélectionné non supporté.' });
     }
@@ -1076,7 +1072,8 @@ app.post('/api/payments/initiate', async (req: Request, res: Response) => {
     // Match an active operator for the selected country (fallback to first enabled operator if available)
     const operator =
       countryData.operators.find((op) => op.id === network && op.enabled) ||
-      countryData.operators.find((op) => op.enabled);
+      countryData.operators.find((op) => op.enabled) ||
+      countryData.operators[0];
 
     if (!operator) {
       return res.status(400).json({
@@ -1122,7 +1119,7 @@ app.post('/api/payments/initiate', async (req: Request, res: Response) => {
         }
       }
     }
-    if (country === 'BJ' && rawDigits.length === 8) {
+    if (resolvedCountryCode === 'BJ' && rawDigits.length === 8) {
       rawDigits = `01${rawDigits}`;
     }
     const formattedPhone = `${countryData.phonePrefix}${rawDigits}`;
@@ -1131,35 +1128,24 @@ app.post('/api/payments/initiate', async (req: Request, res: Response) => {
       userIndex = users.findIndex((u) => isSamePhoneNumber(u.phone, formattedPhone));
     }
 
-    // Validate Betting Site ID (ID du site de paris) before deposit / recharge
+    // Keep registered Betting Site ID immutable once set; never block payment if omitted
     const rawSubmittedBetId = bookmakerUserId ? String(bookmakerUserId).trim() : '';
-    const cleanSubmittedBetId = normalizeBettingSiteId(rawSubmittedBetId);
-    if (txCategory === 'RECHARGE' && !cleanSubmittedBetId) {
-      return res.status(400).json({
-        success: false,
-        message: 'Veuillez saisir votre ID du site de paris inscrit lors de votre inscription avant de faire un dépôt.',
-      });
+    const existingRawBetId = userIndex >= 0 ? (users[userIndex].bookmakerUserId || '').trim() : '';
+    if (userIndex >= 0 && !existingRawBetId && rawSubmittedBetId) {
+      users[userIndex].bookmakerUserId = rawSubmittedBetId;
     }
-
-    if (userIndex >= 0 && cleanSubmittedBetId) {
-      const existingRawBetId = users[userIndex].bookmakerUserId || '';
-      const existingBetId = normalizeBettingSiteId(existingRawBetId);
-      if (existingBetId && existingBetId !== cleanSubmittedBetId) {
-        return res.status(400).json({
-          success: false,
-          message: `L'ID saisi (${rawSubmittedBetId}) ne correspond pas à l'ID de votre compte de paris enregistré lors de l'inscription (${existingRawBetId}).`,
-        });
-      }
-      if (!existingBetId) {
-        users[userIndex].bookmakerUserId = rawSubmittedBetId;
-      }
-    }
+    const effectiveBetId = existingRawBetId || rawSubmittedBetId || undefined;
 
     const idempotencyKey = `idem_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
     const internalId = `tx_${Date.now()}`;
 
-    const [firstName, ...lastNames] = cleanCustomerName.split(/\s+/);
-    const lastName = lastNames.join(' ') || firstName;
+    const effectiveCustomerName =
+      cleanCustomerName ||
+      (userIndex >= 0 ? users[userIndex].fullName : '') ||
+      'Client Aviator';
+    const nameParts = effectiveCustomerName.split(/\s+/).filter(Boolean);
+    const firstName = nameParts[0] || 'Client';
+    const lastName = nameParts.slice(1).join(' ') || nameParts[0] || 'Aviator';
 
     const rawEmail = String(customerEmail || '').trim();
     const safeEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(rawEmail)
@@ -1169,7 +1155,7 @@ app.post('/api/payments/initiate', async (req: Request, res: Response) => {
     const gatewayPayload = {
       amount: numAmount.toFixed(2),
       currency: countryData.currency,
-      country: country,
+      country: resolvedCountryCode,
       network: operator.id,
       description: description || `Paiement ${operator.name}`,
       customer: {
@@ -1267,11 +1253,11 @@ app.post('/api/payments/initiate', async (req: Request, res: Response) => {
     } else {
       const createdUser: User = {
         id: userId || `usr_${Date.now()}`,
-        fullName: cleanCustomerName || 'Client Aviator',
+        fullName: effectiveCustomerName,
         phone: formattedPhone,
         country: countryData.name,
         bookmaker: bookmaker || '1xBet',
-        bookmakerUserId: rawSubmittedBetId || undefined,
+        bookmakerUserId: effectiveBetId,
         vipTier: (vipTier as any) || 'VIP1',
         paymentStatus: 'unpaid',
         balance: 0,
@@ -1286,18 +1272,18 @@ app.post('/api/payments/initiate', async (req: Request, res: Response) => {
     const newRecord: TransactionRecord = {
       id: internalId,
       userId: targetUserId,
-      bookmakerUserId: users[userIndex]?.bookmakerUserId || rawSubmittedBetId || undefined,
+      bookmakerUserId: effectiveBetId,
       saspayPaymentId: gatewayPaymentId,
       transactionType: txCategory,
       amount: numAmount,
       currency: countryData.currency,
-      country: country as CountryCode,
+      country: resolvedCountryCode,
       countryName: countryData.name,
       network: operator.id,
       operatorName: operator.name,
       operatorBrand: operator.brand,
       phone: formattedPhone,
-      customerName: users[userIndex]?.fullName || cleanCustomerName || 'Client Aviator VIP',
+      customerName: effectiveCustomerName,
       customerEmail: safeEmail,
       description:
         description ||
@@ -1729,10 +1715,9 @@ app.post('/api/payments/:id/resend', async (req: Request, res: Response) => {
       return res.status(404).json({ success: false, message: 'Demande de paiement introuvable.' });
     }
 
-    const countryCode: CountryCode =
-      country && SUPPORTED_COUNTRIES[country as CountryCode]
-        ? (country as CountryCode)
-        : (tx.country && SUPPORTED_COUNTRIES[tx.country] ? tx.country : 'BJ');
+    const countryCode: CountryCode = resolveCountryCode(
+      String(country || tx.country || 'BJ')
+    );
     const countryData = SUPPORTED_COUNTRIES[countryCode];
     const operator =
       countryData.operators.find((op) => op.id === (network || tx!.network) && op.enabled) ||
@@ -1760,9 +1745,10 @@ app.post('/api/payments/:id/resend', async (req: Request, res: Response) => {
       targetPhone = `${countryData.phonePrefix}${rawDigits}`;
     }
 
-    const cleanName = String(customerName || tx.customerName || 'Client Aviator').trim();
-    const [firstName, ...lastNames] = cleanName.split(/\s+/);
-    const lastName = lastNames.join(' ') || firstName;
+    const cleanName = String(customerName || tx.customerName || 'Client Aviator').trim() || 'Client Aviator';
+    const resendNameParts = cleanName.split(/\s+/).filter(Boolean);
+    const firstName = resendNameParts[0] || 'Client';
+    const lastName = resendNameParts.slice(1).join(' ') || resendNameParts[0] || 'Aviator';
     const resendIdemKey = `idem_resend_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
 
     const gatewayPayload = {
