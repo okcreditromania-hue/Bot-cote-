@@ -847,11 +847,7 @@ app.post('/api/admin/users/:id/balance', (req: Request, res: Response) => {
   });
 
   saveDataStore();
-  broadcastToUser(users[index], 'user:updated', {
-    user: users[index],
-    balanceAction: action,
-    balanceAmount: numAmount,
-  });
+  broadcastToUser(users[index], 'user:updated', { user: users[index] });
   broadcastToAdmins('admin:update', { reason: 'balance_updated' });
   return res.json({ success: true, user: users[index] });
 });
@@ -963,10 +959,6 @@ app.post('/api/admin/support/reply', (req: Request, res: Response) => {
   conv.unreadCountClient += 1;
 
   saveDataStore();
-  const matchedChatUser = users.find((u) => u.id === conv.userId || isSamePhoneNumber(u.phone, conv.userPhone));
-  if (matchedChatUser) {
-    broadcastToUser(matchedChatUser, 'support:updated', { conversation: conv });
-  }
   return res.json({ success: true, message: replyMsg, conversation: conv });
 });
 
@@ -1180,18 +1172,17 @@ app.post('/api/payments/initiate', async (req: Request, res: Response) => {
       },
     };
 
-    const dispatchSasPayPush = async (
+    const triggerSasPayPush = async (
       payload: any,
       idemKey: string,
       opId: string
-    ): Promise<{ gatewayResponseData: any; gatewayPaymentId?: string; hasLiveGatewayData: boolean }> => {
+    ): Promise<{ gatewayResponseData: any; gatewayPaymentId: string }> => {
       let respData: any = { success: true, status: 'PENDING', provider: 'SASPAY' };
       let payId: string | undefined = undefined;
-      let hasLiveGatewayData = false;
       if (opId !== 'finances_gw') {
         try {
           const controller = new AbortController();
-          const timeout = setTimeout(() => controller.abort(), 15000);
+          const timeout = setTimeout(() => controller.abort(), 3500);
           const response = await fetch(`${SASPAY_API_BASE}/payments/softpay/`, {
             method: 'POST',
             headers: {
@@ -1209,7 +1200,6 @@ app.post('/api/payments/initiate', async (req: Request, res: Response) => {
             const parsed = JSON.parse(responseText);
             if (parsed && parsed.success === true) {
               respData = parsed;
-              hasLiveGatewayData = true;
             }
             payId =
               parsed?.data?.id ||
@@ -1223,30 +1213,17 @@ app.post('/api/payments/initiate', async (req: Request, res: Response) => {
           // Silently handle network/upstream timeout without exposing raw API errors to the client
         }
       }
-      return { gatewayResponseData: respData, gatewayPaymentId: payId, hasLiveGatewayData };
+      if (!payId) {
+        payId = `pay_${opId}_${Date.now().toString().slice(-6)}`;
+      }
+      return { gatewayResponseData: respData, gatewayPaymentId: payId };
     };
 
-    let settledFast = false;
-    const sasPayPromise = dispatchSasPayPush(gatewayPayload, idempotencyKey, operator.id);
-    const fastOutcome =
-      operator.id === 'finances_gw'
-        ? await sasPayPromise
-        : await Promise.race([
-            sasPayPromise,
-            new Promise<null>((resolve) => setTimeout(() => resolve(null), 600)),
-          ]);
-
-    if (fastOutcome) {
-      settledFast = true;
-    }
-
-    const gatewayResponseData = fastOutcome?.gatewayResponseData || {
-      success: true,
-      status: 'PENDING',
-      provider: 'SASPAY',
-    };
-    const gatewayPaymentId =
-      fastOutcome?.gatewayPaymentId || `pay_${operator.id}_${Date.now().toString().slice(-6)}`;
+    const { gatewayResponseData, gatewayPaymentId } = await triggerSasPayPush(
+      gatewayPayload,
+      idempotencyKey,
+      operator.id
+    );
 
     // Default status is STRICTLY PENDING: Administrator confirmation is ALWAYS required before unlocking VIP or crediting balance
     const paymentStatus: PaymentStatus = 'PENDING';
@@ -1331,35 +1308,9 @@ app.post('/api/payments/initiate', async (req: Request, res: Response) => {
 
     saveDataStore();
     if (userIndex >= 0) {
-      broadcastToUser(users[userIndex], 'user:updated', { user: users[userIndex], transaction: newRecord });
+      broadcastToUser(users[userIndex], 'user:updated', { user: users[userIndex] });
     }
     broadcastToAdmins('admin:update', { reason: 'new_payment', transaction: newRecord });
-
-    // If SASPay finishes right after the 600ms fast-return window, attach checkout_url/instructions & push via SSE
-    if (!settledFast) {
-      sasPayPromise
-        .then((lateOutcome) => {
-          if (!lateOutcome) return;
-          if (!lateOutcome.hasLiveGatewayData && !lateOutcome.gatewayPaymentId) return;
-          newRecord.apiResponse = lateOutcome.gatewayResponseData;
-          if (lateOutcome.gatewayPaymentId) {
-            newRecord.saspayPaymentId = lateOutcome.gatewayPaymentId;
-          }
-          newRecord.updatedAt = new Date().toISOString();
-          const existingOp = operations.find((o) => o.id === `op_${newRecord.id}`);
-          if (existingOp && lateOutcome.gatewayPaymentId) {
-            existingOp.reference = lateOutcome.gatewayPaymentId;
-            existingOp.updatedAt = newRecord.updatedAt;
-          }
-          saveDataStore();
-          const liveUser = users.find((u) => u.id === targetUserId) || users[userIndex];
-          if (liveUser) {
-            broadcastToUser(liveUser, 'user:updated', { user: liveUser, transaction: newRecord });
-          }
-          broadcastToAdmins('admin:update', { reason: 'saspay_async_ack', transaction: newRecord });
-        })
-        .catch(() => {});
-    }
 
     return res.status(201).json({
       success: true,
@@ -1418,23 +1369,7 @@ app.post('/api/wallet/withdraw', (req: Request, res: Response) => {
     countryData.operators.find((op) => op.id === network && op.enabled) ||
     countryData.operators[0] ||
     SUPPORTED_COUNTRIES.BJ.operators[0];
-  let wdDigits = String(phone || user.phone).replace(/[^0-9]/g, '');
-  if (wdDigits.startsWith('00')) wdDigits = wdDigits.slice(2);
-  const wdPrefixDigits = countryData.phonePrefix.replace(/[^0-9]/g, '');
-  if (wdDigits.startsWith(wdPrefixDigits) && wdDigits.length - wdPrefixDigits.length >= 7) {
-    wdDigits = wdDigits.slice(wdPrefixDigits.length);
-  } else {
-    for (const code of UEMOA_PREFIXES) {
-      if (wdDigits.startsWith(code) && wdDigits.length - code.length >= 7) {
-        wdDigits = wdDigits.slice(code.length);
-        break;
-      }
-    }
-  }
-  if (countryCode === 'BJ' && wdDigits.length === 8) {
-    wdDigits = `01${wdDigits}`;
-  }
-  const targetPhone = wdDigits.length >= 7 ? `${countryData.phonePrefix}${wdDigits}` : String(phone || user.phone).trim();
+  const targetPhone = String(phone || user.phone).trim();
 
   // Deduct into pending hold so the user cannot double-withdraw the same funds
   user.balance = currentBalance - numAmount;
@@ -1779,72 +1714,42 @@ app.post('/api/payments/:id/resend', async (req: Request, res: Response) => {
       },
     };
 
-    const dispatchResendPush = async (): Promise<{
-      gatewayResponseData: any;
-      gatewayPaymentId?: string;
-      hasLiveGatewayData: boolean;
-    }> => {
-      let respData: any = { success: true, status: 'PENDING', provider: 'SASPAY', resent: true };
-      let payId: string | undefined = undefined;
-      let hasLiveGatewayData = false;
-      if (operator.id !== 'finances_gw') {
+    let gatewayResponseData: any = { success: true, status: 'PENDING', provider: 'SASPAY', resent: true };
+    let gatewayPaymentId: string | undefined = undefined;
+
+    if (operator.id !== 'finances_gw') {
+      try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 3500);
+        const response = await fetch(`${SASPAY_API_BASE}/payments/softpay/`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${SASPAY_SECRET_KEY}`,
+            'Content-Type': 'application/json',
+            'Idempotency-Key': resendIdemKey,
+          },
+          body: JSON.stringify(gatewayPayload),
+          signal: controller.signal,
+        });
+        clearTimeout(timeout);
+        const responseText = await response.text();
         try {
-          const controller = new AbortController();
-          const timeout = setTimeout(() => controller.abort(), 15000);
-          const response = await fetch(`${SASPAY_API_BASE}/payments/softpay/`, {
-            method: 'POST',
-            headers: {
-              Authorization: `Bearer ${SASPAY_SECRET_KEY}`,
-              'Content-Type': 'application/json',
-              'Idempotency-Key': resendIdemKey,
-            },
-            body: JSON.stringify(gatewayPayload),
-            signal: controller.signal,
-          });
-          clearTimeout(timeout);
-          const responseText = await response.text();
-          try {
-            const parsed = JSON.parse(responseText);
-            if (parsed && parsed.success === true) {
-              respData = parsed;
-              hasLiveGatewayData = true;
-            }
-            payId =
-              parsed?.data?.id ||
-              parsed?.data?.payment_id ||
-              parsed?.payment_id ||
-              parsed?.id;
-          } catch {
-            // ignore non-JSON upstream response
+          const parsed = JSON.parse(responseText);
+          if (parsed && parsed.success === true) {
+            gatewayResponseData = parsed;
           }
+          gatewayPaymentId =
+            parsed?.data?.id ||
+            parsed?.data?.payment_id ||
+            parsed?.payment_id ||
+            parsed?.id;
         } catch {
-          // silently continue so request never fails or disappears
+          // ignore non-JSON upstream response
         }
+      } catch {
+        // silently continue so request never fails or disappears
       }
-      return { gatewayResponseData: respData, gatewayPaymentId: payId, hasLiveGatewayData };
-    };
-
-    let resendSettledFast = false;
-    const resendSasPayPromise = dispatchResendPush();
-    const fastResendOutcome =
-      operator.id === 'finances_gw'
-        ? await resendSasPayPromise
-        : await Promise.race([
-            resendSasPayPromise,
-            new Promise<null>((resolve) => setTimeout(() => resolve(null), 600)),
-          ]);
-
-    if (fastResendOutcome) {
-      resendSettledFast = true;
     }
-
-    const gatewayResponseData = fastResendOutcome?.gatewayResponseData || {
-      success: true,
-      status: 'PENDING',
-      provider: 'SASPAY',
-      resent: true,
-    };
-    const gatewayPaymentId = fastResendOutcome?.gatewayPaymentId;
 
     const nowIso = new Date().toISOString();
     const nextResendCount = (tx.resendCount || 0) + 1;
@@ -1870,9 +1775,9 @@ app.post('/api/payments/:id/resend', async (req: Request, res: Response) => {
         ? `Message de prélèvement et confirmation renvoyés sur ${targetPhone} (${operator.name}) · Envoi #${nextResendCount + 1}.`
         : `Confirmation et message de prélèvement renvoyés sur ${targetPhone} (${operator.name}) · Envoi #${nextResendCount + 1}.`;
 
-    const matchedUser =
-      (tx.userId ? users.find((u) => u.id === tx!.userId) : undefined) ||
-      users.find((u) => isSamePhoneNumber(u.phone, tx!.phone));
+    const matchedUser = users.find((u) =>
+      tx!.userId ? u.id === tx!.userId : isSamePhoneNumber(u.phone, tx!.phone)
+    );
 
     upsertUserOperation({
       id: `op_${tx.id}`,
@@ -1893,26 +1798,6 @@ app.post('/api/payments/:id/resend', async (req: Request, res: Response) => {
       broadcastToUser(matchedUser, 'user:updated', { user: matchedUser, transaction: tx });
     }
     broadcastToAdmins('admin:update', { reason: 'payment_resent', transaction: tx });
-
-    if (!resendSettledFast) {
-      const activeTx = tx;
-      resendSasPayPromise
-        .then((lateResend) => {
-          if (!lateResend) return;
-          if (!lateResend.hasLiveGatewayData && !lateResend.gatewayPaymentId) return;
-          activeTx.apiResponse = lateResend.gatewayResponseData;
-          if (lateResend.gatewayPaymentId) {
-            activeTx.saspayPaymentId = lateResend.gatewayPaymentId;
-          }
-          activeTx.updatedAt = new Date().toISOString();
-          saveDataStore();
-          if (matchedUser) {
-            broadcastToUser(matchedUser, 'user:updated', { user: matchedUser, transaction: activeTx });
-          }
-          broadcastToAdmins('admin:update', { reason: 'saspay_resend_async_ack', transaction: activeTx });
-        })
-        .catch(() => {});
-    }
 
     return res.json({
       success: true,
@@ -2002,9 +1887,9 @@ app.post('/api/admin/payments/:id/decision', (req: Request, res: Response) => {
       : 'VIP_ACTIVATION'
   );
 
-  const user =
-    (tx.userId ? users.find((u) => u.id === tx.userId) : undefined) ||
-    users.find((u) => isSamePhoneNumber(u.phone, tx.phone));
+  const user = users.find((u) =>
+    tx.userId ? u.id === tx.userId : isSamePhoneNumber(u.phone, tx.phone)
+  );
 
   const nowIso = new Date().toISOString();
 
@@ -2193,12 +2078,6 @@ app.post('/api/admin/payments/:id/decision', (req: Request, res: Response) => {
       decision,
       transactionType: txCategory,
     });
-    const updatedConv = supportConversations.find(
-      (c) => isSamePhoneNumber(c.userPhone, tx.phone) || c.userId === user.id
-    );
-    if (updatedConv) {
-      broadcastToUser(user, 'support:updated', { conversation: updatedConv });
-    }
   }
   broadcastToAdmins('admin:update', { reason: 'decision_applied', transaction: tx });
 
@@ -2250,7 +2129,7 @@ const aviatorEngine: ServerAviatorEngine = {
   code15: generateCode15((aviatorHistory[0]?.roundNumber || 100) + 1),
   crashPoint: generateNextCrashPoint(null),
   currentMultiplier: 1.0,
-  countdownSeconds: 15,
+  countdownSeconds: 10,
   phaseStartedAt: Date.now(),
   adminOverrideOdd: null,
   activeBets: new Map(),
@@ -2286,7 +2165,7 @@ function startNewCountdownRound() {
   aviatorEngine.roundNumber += 1;
   aviatorEngine.roundId = `rnd_${Date.now()}`;
   aviatorEngine.phase = 'COUNTDOWN';
-  aviatorEngine.countdownSeconds = 15;
+  aviatorEngine.countdownSeconds = 10;
   aviatorEngine.currentMultiplier = 1.0;
   aviatorEngine.phaseStartedAt = Date.now();
   aviatorEngine.code15 = generateCode15(aviatorEngine.roundNumber);
@@ -2295,25 +2174,25 @@ function startNewCountdownRound() {
   aviatorEngine.activeBets.clear();
 }
 
-// Tick Aviator Engine every 100ms
+// Tick Aviator Engine every 120ms
 setInterval(() => {
   const now = Date.now();
   const elapsedSec = (now - aviatorEngine.phaseStartedAt) / 1000;
 
   if (aviatorEngine.phase === 'COUNTDOWN') {
-    const remaining = Math.max(0, Math.ceil(15 - elapsedSec));
+    const remaining = Math.max(0, Math.ceil(10 - elapsedSec));
     aviatorEngine.countdownSeconds = remaining;
 
-    if (elapsedSec >= 15) {
+    if (elapsedSec >= 10) {
       aviatorEngine.phase = 'FLYING';
       aviatorEngine.phaseStartedAt = now;
       aviatorEngine.currentMultiplier = 1.0;
       aviatorEngine.countdownSeconds = 0;
     }
   } else if (aviatorEngine.phase === 'FLYING') {
-    // Slow, calm, readable Spribe Aviator climb curve (~11s to reach 2.00x, zero rush)
+    // Authentic calm Spribe Aviator climb curve (~6s to reach 2.00x, smooth & readable)
     const mult = parseFloat(
-      (1 + elapsedSec * 0.065 + Math.pow(elapsedSec, 1.65) * 0.006).toFixed(2)
+      (1 + elapsedSec * 0.115 + Math.pow(elapsedSec, 1.75) * 0.015).toFixed(2)
     );
     if (mult >= aviatorEngine.crashPoint) {
       aviatorEngine.currentMultiplier = aviatorEngine.crashPoint;
@@ -2392,7 +2271,7 @@ app.get('/api/aviator/state', (req: Request, res: Response) => {
   return res.json({ success: true, state: buildPublicAviatorState(user) });
 });
 
-// 7.c Place Bet on Aviator Round (during 15s COUNTDOWN)
+// 7.c Place Bet on Aviator Round (during 10s COUNTDOWN)
 app.post('/api/aviator/bet', (req: Request, res: Response) => {
   const { userId, amount } = req.body;
   const user = users.find((u) => u.id === userId);
@@ -2406,7 +2285,7 @@ app.post('/api/aviator/bet', (req: Request, res: Response) => {
   if (aviatorEngine.phase !== 'COUNTDOWN') {
     return res.status(400).json({
       success: false,
-      message: 'Veuillez attendre le compte à rebours de 15 secondes du prochain vol.',
+      message: 'Veuillez attendre le compte à rebours de 10 secondes du prochain vol.',
     });
   }
   if (aviatorEngine.activeBets.has(user.id)) {

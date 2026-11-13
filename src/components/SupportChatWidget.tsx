@@ -54,44 +54,8 @@ export const SupportChatWidget: React.FC<SupportChatWidgetProps> = ({
 
   useEffect(() => {
     fetchMessages();
-
-    const sseUrl = `/api/events/stream?userId=${encodeURIComponent(userId)}&userPhone=${encodeURIComponent(
-      userPhone
-    )}&role=client`;
-    const eventSource = new EventSource(sseUrl);
-
-    eventSource.addEventListener('support:updated', (event) => {
-      try {
-        const payload = JSON.parse((event as MessageEvent).data);
-        if (payload.conversation) {
-          setMessages(payload.conversation.messages || []);
-          if (!isOpen) {
-            setUnreadCount(payload.conversation.unreadCountClient || 0);
-          }
-          return;
-        }
-      } catch {
-        // fallback to fetch
-      }
-      fetchMessages();
-    });
-
-    const handleVisibilityOrFocus = () => {
-      if (document.visibilityState === 'visible') {
-        fetchMessages();
-      }
-    };
-
-    window.addEventListener('focus', handleVisibilityOrFocus);
-    document.addEventListener('visibilitychange', handleVisibilityOrFocus);
-
-    const interval = setInterval(fetchMessages, 3000);
-    return () => {
-      eventSource.close();
-      clearInterval(interval);
-      window.removeEventListener('focus', handleVisibilityOrFocus);
-      document.removeEventListener('visibilitychange', handleVisibilityOrFocus);
-    };
+    const interval = setInterval(fetchMessages, 4000);
+    return () => clearInterval(interval);
   }, [userId, isOpen, userName, userPhone, userCountry]);
 
   useEffect(() => {

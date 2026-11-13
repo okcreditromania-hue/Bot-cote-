@@ -601,66 +601,6 @@
   ],
   "aviatorHistory": [
     {
-      "roundNumber": 188,
-      "crashPoint": 9.44,
-      "code15": "AV1518881557686",
-      "timestamp": "2026-11-13T11:58:48.098Z"
-    },
-    {
-      "roundNumber": 187,
-      "crashPoint": 5.18,
-      "code15": "AV1518724795621",
-      "timestamp": "2026-11-13T11:57:32.862Z"
-    },
-    {
-      "roundNumber": 186,
-      "crashPoint": 7.06,
-      "code15": "AV1518696471166",
-      "timestamp": "2026-11-13T11:48:48.020Z"
-    },
-    {
-      "roundNumber": 185,
-      "crashPoint": 1.82,
-      "code15": "AV1518598621570",
-      "timestamp": "2026-11-13T11:48:12.240Z"
-    },
-    {
-      "roundNumber": 184,
-      "crashPoint": 2.57,
-      "code15": "AV1518453271850",
-      "timestamp": "2026-11-13T11:47:53.946Z"
-    },
-    {
-      "roundNumber": 183,
-      "crashPoint": 3.27,
-      "code15": "AV1518367718976",
-      "timestamp": "2026-11-13T11:47:32.337Z"
-    },
-    {
-      "roundNumber": 182,
-      "crashPoint": 1.62,
-      "code15": "AV1518269360206",
-      "timestamp": "2026-11-13T11:47:07.953Z"
-    },
-    {
-      "roundNumber": 181,
-      "crashPoint": 3.13,
-      "code15": "AV1518149912202",
-      "timestamp": "2026-11-13T11:46:50.665Z"
-    },
-    {
-      "roundNumber": 180,
-      "crashPoint": 63.44,
-      "code15": "AV1518016642502",
-      "timestamp": "2026-11-13T11:46:26.817Z"
-    },
-    {
-      "roundNumber": 179,
-      "crashPoint": 5.51,
-      "code15": "AV1517979366433",
-      "timestamp": "2026-11-13T11:44:29.871Z"
-    },
-    {
       "roundNumber": 178,
       "crashPoint": 2.63,
       "code15": "AV1517829715176",
@@ -839,6 +779,66 @@
       "crashPoint": 1.38,
       "code15": "AV1514941201463",
       "timestamp": "2026-11-13T02:25:16.701Z"
+    },
+    {
+      "roundNumber": 148,
+      "crashPoint": 1.82,
+      "code15": "AV1514839185253",
+      "timestamp": "2026-11-13T02:25:00.834Z"
+    },
+    {
+      "roundNumber": 147,
+      "crashPoint": 2.51,
+      "code15": "AV1514744234516",
+      "timestamp": "2026-11-13T02:24:42.552Z"
+    },
+    {
+      "roundNumber": 146,
+      "crashPoint": 9.15,
+      "code15": "AV1514618680213",
+      "timestamp": "2026-11-13T02:24:21.148Z"
+    },
+    {
+      "roundNumber": 145,
+      "crashPoint": 3.17,
+      "code15": "AV1514534232934",
+      "timestamp": "2026-11-13T02:23:40.257Z"
+    },
+    {
+      "roundNumber": 144,
+      "crashPoint": 1.4,
+      "code15": "AV1514448758223",
+      "timestamp": "2026-11-13T02:23:16.353Z"
+    },
+    {
+      "roundNumber": 143,
+      "crashPoint": 2.18,
+      "code15": "AV1514367589898",
+      "timestamp": "2026-11-13T02:23:00.360Z"
+    },
+    {
+      "roundNumber": 142,
+      "crashPoint": 2,
+      "code15": "AV1514288864996",
+      "timestamp": "2026-11-13T02:22:40.374Z"
+    },
+    {
+      "roundNumber": 141,
+      "crashPoint": 4.56,
+      "code15": "AV1514115801180",
+      "timestamp": "2026-11-13T02:22:21.287Z"
+    },
+    {
+      "roundNumber": 140,
+      "crashPoint": 34.2,
+      "code15": "AV1514061542530",
+      "timestamp": "2026-11-13T02:21:52.658Z"
+    },
+    {
+      "roundNumber": 139,
+      "crashPoint": 9.26,
+      "code15": "AV1513973504750",
+      "timestamp": "2026-11-13T02:20:29.679Z"
     }
   ]
 }

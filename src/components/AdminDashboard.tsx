@@ -162,18 +162,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       onRefreshData();
     });
 
-    const handleFocusOrVisibility = () => {
-      if (document.visibilityState === 'visible') {
-        fetchPendingPayments();
-        fetchUsers();
-        fetchConversations();
-        onRefreshData();
-      }
-    };
-
-    window.addEventListener('focus', handleFocusOrVisibility);
-    document.addEventListener('visibilitychange', handleFocusOrVisibility);
-
     const interval = setInterval(() => {
       fetchPendingPayments();
       fetchConversations();
@@ -182,8 +170,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     return () => {
       eventSource.close();
       clearInterval(interval);
-      window.removeEventListener('focus', handleFocusOrVisibility);
-      document.removeEventListener('visibilitychange', handleFocusOrVisibility);
     };
   }, []);
 
@@ -915,7 +901,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               </h4>
             </div>
             <p className="text-[11px] text-slate-600">
-              Définissez la cote exacte du prochain tour (diffusée automatiquement 15s avant le départ aux membres VIP actifs).
+              Définissez la cote exacte du prochain tour (diffusée automatiquement 10s avant le départ aux membres VIP actifs).
             </p>
             <div className="flex items-center gap-2">
               <input

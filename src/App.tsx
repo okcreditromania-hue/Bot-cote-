@@ -129,7 +129,6 @@ export default function App() {
   const handlePaymentSuccess = useCallback((updatedUser: User) => {
     setCurrentUser(updatedUser);
     StorageService.setCurrentUser(updatedUser);
-    StorageService.addUser(updatedUser);
     fetchTransactionsAndStats();
   }, [fetchTransactionsAndStats]);
 

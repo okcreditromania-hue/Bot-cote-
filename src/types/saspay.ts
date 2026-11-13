@@ -6,12 +6,10 @@ export type OperatorId =
   | 'celtiis_bj'
   | 'orange_bf'
   | 'moov_bf'
-  | 'touchcash_bf'
   | 'orange_ci'
   | 'mtn_ci'
   | 'moov_ci'
   | 'wave_ci'
-  | 'djamo_ci'
   | 'orange_ml'
   | 'moov_ml'
   | 'mobi_cash_ml'
@@ -21,12 +19,8 @@ export type OperatorId =
   | 'wave_sn'
   | 'freemoney_sn'
   | 'expresso_sn'
-  | 'djamo_sn'
-  | 'wizall_sn'
-  | 'paydunya_sn'
   | 'moov_tg'
   | 'togocel'
-  | 'mixx_tg'
   | 'finances_gw';
 
 export type PaymentStatus = 'PENDING' | 'SUCCESS' | 'FAILED';
@@ -45,11 +39,6 @@ export interface Operator {
     | 'EXPRESSO'
     | 'TMONEY'
     | 'MOBICASH'
-    | 'TOUCHCASH'
-    | 'DJAMO'
-    | 'WIZALL'
-    | 'PAYDUNYA'
-    | 'MIXX'
     | 'FINANCES';
   logoText: string;
   colorBg: string;

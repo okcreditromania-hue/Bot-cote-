@@ -219,9 +219,7 @@ export const ClientAccount: React.FC<ClientAccountProps> = ({
 
   // VIP Activation Checkout & SMS Screenshot Proof state (persisted locally so phone switches never drop requests)
   const vipTxStorageKey = `aviator_active_vip_tx_${user.id}`;
-  const vipDeadlineStorageKey = `aviator_vip_countdown_end_${user.id}`;
   const rechargeTxStorageKey = `aviator_pending_recharge_${user.id}`;
-  const rechargeDeadlineStorageKey = `aviator_recharge_countdown_end_${user.id}`;
   const rechargeConfirmedStorageKey = `aviator_recharge_confirmed_${user.id}`;
   const queuedPaymentsStorageKey = `aviator_queued_payments_${user.id}`;
 
@@ -244,16 +242,6 @@ export const ClientAccount: React.FC<ClientAccountProps> = ({
   const [isUploadingProof, setIsUploadingProof] = useState<boolean>(false);
   const [isReplacingProof, setIsReplacingProof] = useState<boolean>(false);
   const dismissedPendingTxIdsRef = useRef<Set<string>>(new Set());
-  const prevTxStatusesRef = useRef<Map<string, string>>(new Map());
-
-  // 60-second Mobile Money prélèvement countdown deadlines
-  const [vipCountdownEndMs, setVipCountdownEndMs] = useState<number | null>(() =>
-    readLocalJson<number>(vipDeadlineStorageKey)
-  );
-  const [rechargeCountdownEndMs, setRechargeCountdownEndMs] = useState<number | null>(() =>
-    readLocalJson<number>(rechargeDeadlineStorageKey)
-  );
-  const [countdownNowMs, setCountdownNowMs] = useState<number>(() => Date.now());
 
   // Live synced state (operations, transactions, aviator game)
   const [clientTransactions, setClientTransactions] = useState<TransactionRecord[]>([]);
@@ -304,7 +292,7 @@ export const ClientAccount: React.FC<ClientAccountProps> = ({
 
   const { firebaseUser } = useFirebase();
 
-  // Keep bookmaker ID, payer name, and active country operators synced cleanly
+  // Keep bookmaker ID and payer name synced cleanly if updated from server
   useEffect(() => {
     if (user.bookmakerUserId) {
       setVipBookmakerId((prev) => prev || user.bookmakerUserId || '');
@@ -315,33 +303,6 @@ export const ClientAccount: React.FC<ClientAccountProps> = ({
       setRechargeCustomerName((prev) => prev || user.fullName);
     }
   }, [user.bookmakerUserId, user.fullName]);
-
-  useEffect(() => {
-    if (
-      vipCountryInfo.operators.length > 0 &&
-      (!selectedOperator || !vipCountryInfo.operators.some((o) => o.id === selectedOperator.id))
-    ) {
-      setSelectedOperator(vipCountryInfo.operators[0]);
-    }
-  }, [vipCountryCode, vipCountryInfo.operators, selectedOperator]);
-
-  useEffect(() => {
-    if (
-      rechargeCountryInfo.operators.length > 0 &&
-      (!rechargeOperator || !rechargeCountryInfo.operators.some((o) => o.id === rechargeOperator.id))
-    ) {
-      setRechargeOperator(rechargeCountryInfo.operators[0]);
-    }
-  }, [rechargeCountryCode, rechargeCountryInfo.operators, rechargeOperator]);
-
-  useEffect(() => {
-    if (
-      withdrawCountryInfo.operators.length > 0 &&
-      (!withdrawOperator || !withdrawCountryInfo.operators.some((o) => o.id === withdrawOperator.id))
-    ) {
-      setWithdrawOperator(withdrawCountryInfo.operators[0]);
-    }
-  }, [withdrawCountryCode, withdrawCountryInfo.operators, withdrawOperator]);
 
   const vip1Price = 550;
   const vip2Price = 1500;
@@ -354,64 +315,14 @@ export const ClientAccount: React.FC<ClientAccountProps> = ({
   const pendingRechargeTxRef = useRef(pendingRechargeTx);
   pendingRechargeTxRef.current = pendingRechargeTx;
 
-  const startVipCountdown = useCallback(() => {
-    const end = Date.now() + 60_000;
-    setCountdownNowMs(Date.now());
-    setVipCountdownEndMs(end);
-    writeLocalJson(vipDeadlineStorageKey, end);
-  }, [vipDeadlineStorageKey]);
-
-  const clearVipCountdown = useCallback(() => {
-    setVipCountdownEndMs(null);
-    writeLocalJson(vipDeadlineStorageKey, null);
-  }, [vipDeadlineStorageKey]);
-
-  const startRechargeCountdown = useCallback(() => {
-    const end = Date.now() + 60_000;
-    setCountdownNowMs(Date.now());
-    setRechargeCountdownEndMs(end);
-    writeLocalJson(rechargeDeadlineStorageKey, end);
-  }, [rechargeDeadlineStorageKey]);
-
-  const clearRechargeCountdown = useCallback(() => {
-    setRechargeCountdownEndMs(null);
-    writeLocalJson(rechargeDeadlineStorageKey, null);
-  }, [rechargeDeadlineStorageKey]);
-
-  useEffect(() => {
-    if (!isWaitingAdminApproval && !pendingRechargeTx) return;
-    setCountdownNowMs(Date.now());
-    const timer = setInterval(() => {
-      setCountdownNowMs(Date.now());
-    }, 500);
-    return () => clearInterval(timer);
-  }, [isWaitingAdminApproval, pendingRechargeTx]);
-
-  const computeRemainingSeconds = (endMs: number | null, tx: TransactionRecord | null): number => {
-    if (endMs !== null) {
-      return Math.max(0, Math.ceil((endMs - countdownNowMs) / 1000));
-    }
-    if (tx) {
-      const started = new Date(tx.lastResentAt || tx.createdAt).getTime();
-      if (!isNaN(started)) {
-        return Math.max(0, Math.ceil((started + 60_000 - countdownNowMs) / 1000));
-      }
-    }
-    return 0;
-  };
-
-  const vipCountdownSeconds = computeRemainingSeconds(vipCountdownEndMs, currentTransaction);
-  const rechargeCountdownSeconds = computeRemainingSeconds(rechargeCountdownEndMs, pendingRechargeTx);
-
   // Keep active checkout states mirrored in localStorage so manipulating the phone never drops a request
   useEffect(() => {
     if (isPaid) {
       writeLocalJson(vipTxStorageKey, null);
-      writeLocalJson(vipDeadlineStorageKey, null);
     } else if (isWaitingAdminApproval && currentTransaction) {
       writeLocalJson(vipTxStorageKey, currentTransaction);
     }
-  }, [isPaid, isWaitingAdminApproval, currentTransaction, vipTxStorageKey, vipDeadlineStorageKey]);
+  }, [isPaid, isWaitingAdminApproval, currentTransaction, vipTxStorageKey]);
 
   useEffect(() => {
     writeLocalJson(rechargeTxStorageKey, pendingRechargeTx);
@@ -475,19 +386,11 @@ export const ClientAccount: React.FC<ClientAccountProps> = ({
             message: 'Paiement VIP confirmé par l’administrateur ! Votre jeu Aviator & Code 15 est actif.',
           });
           onPaymentSuccess(serverUser);
-        } else if (serverUser.paymentStatus !== 'paid' && prevUser.paymentStatus === 'paid') {
-          setLiveAlert({
-            type: 'info',
-            message: 'Votre statut VIP a été mis à jour par l’administrateur.',
-          });
-          onPaymentSuccess(serverUser);
         } else if (
           serverUser.id !== prevUser.id ||
           serverUser.vipTier !== prevUser.vipTier ||
           serverUser.paymentStatus !== prevUser.paymentStatus ||
           serverUser.bookmakerUserId !== prevUser.bookmakerUserId ||
-          serverUser.notes !== prevUser.notes ||
-          serverUser.fullName !== prevUser.fullName ||
           (serverUser.balance ?? 0) !== (prevUser.balance ?? 0)
         ) {
           onPaymentSuccess(serverUser);
@@ -497,49 +400,6 @@ export const ClientAccount: React.FC<ClientAccountProps> = ({
       if (Array.isArray(data.transactions)) {
         const serverTxs = data.transactions as TransactionRecord[];
         setClientTransactions(serverTxs);
-
-        // Detect admin decisions that completed while client was offline or backgrounded
-        for (const tx of serverTxs) {
-          const prevStatus = prevTxStatusesRef.current.get(tx.id);
-          if (prevStatus === 'PENDING' && tx.status !== 'PENDING') {
-            if (tx.transactionType === 'RECHARGE') {
-              setPendingRechargeTx(null);
-              setRechargeConfirmedMessage('');
-              setRechargePromptNotice('');
-              writeLocalJson(rechargeTxStorageKey, null);
-              writeLocalJson(rechargeConfirmedStorageKey, null);
-              setLiveAlert({
-                type: tx.status === 'SUCCESS' ? 'success' : 'error',
-                message:
-                  tx.status === 'SUCCESS'
-                    ? `Rechargement validé : +${Number(tx.amount || 0).toLocaleString('fr-FR')} FCFA ajoutés à votre solde !`
-                    : tx.statusMessage || 'Rechargement refusé par l’administrateur.',
-              });
-            } else if (tx.transactionType === 'WITHDRAWAL') {
-              setLiveAlert({
-                type: tx.status === 'SUCCESS' ? 'success' : 'error',
-                message:
-                  tx.status === 'SUCCESS'
-                    ? `Retrait validé et payé : ${Number(tx.amount || 0).toLocaleString('fr-FR')} FCFA envoyés sur votre numéro.`
-                    : tx.statusMessage || 'Retrait refusé par l’administrateur. Montant recrédité.',
-              });
-            } else if ((!tx.transactionType || tx.transactionType === 'VIP_ACTIVATION') && tx.status === 'FAILED') {
-              setIsWaitingAdminApproval(false);
-              setCurrentTransaction(null);
-              writeLocalJson(vipTxStorageKey, null);
-              setLiveAlert({
-                type: 'error',
-                message: tx.statusMessage || 'Demande VIP rejetée par l’administrateur.',
-              });
-            }
-          }
-        }
-        const nextStatusMap = new Map<string, string>();
-        for (const tx of serverTxs) {
-          nextStatusMap.set(tx.id, tx.status);
-        }
-        prevTxStatusesRef.current = nextStatusMap;
-
         if (userRef.current.paymentStatus !== 'paid') {
           const pendingVipTxs = serverTxs.filter(
             (t) => t.status === 'PENDING' && (!t.transactionType || t.transactionType === 'VIP_ACTIVATION')
@@ -565,20 +425,8 @@ export const ClientAccount: React.FC<ClientAccountProps> = ({
             } else {
               setPendingRechargeTx(null);
               setRechargeConfirmedMessage('');
-              setRechargePromptNotice('');
               writeLocalJson(rechargeTxStorageKey, null);
               writeLocalJson(rechargeConfirmedStorageKey, null);
-              if (matchedRecharge.status === 'SUCCESS') {
-                setLiveAlert({
-                  type: 'success',
-                  message: `Rechargement validé : +${Number(matchedRecharge.amount || 0).toLocaleString('fr-FR')} FCFA ajoutés à votre solde !`,
-                });
-              } else if (matchedRecharge.status === 'FAILED') {
-                setLiveAlert({
-                  type: 'error',
-                  message: matchedRecharge.statusMessage || 'Rechargement refusé par l’administrateur.',
-                });
-              }
             }
           }
         }
@@ -605,10 +453,6 @@ export const ClientAccount: React.FC<ClientAccountProps> = ({
     )}&role=client`;
     const eventSource = new EventSource(sseUrl);
 
-    eventSource.onopen = () => {
-      performSync();
-    };
-
     eventSource.addEventListener('connected', (event) => {
       try {
         const payload = JSON.parse((event as MessageEvent).data);
@@ -634,42 +478,14 @@ export const ClientAccount: React.FC<ClientAccountProps> = ({
         const payload = JSON.parse((event as MessageEvent).data);
         if (payload.user && payload.user.id === userRef.current.id) {
           const updated: User = payload.user;
-
-          // Live update pending transaction when background SASPay checkout_url / instructions arrive
-          if (payload.transaction && payload.transaction.status === 'PENDING') {
-            const liveTx: TransactionRecord = payload.transaction;
-            if (currentTxRef.current && liveTx.id === currentTxRef.current.id) {
-              setCurrentTransaction(liveTx);
-              writeLocalJson(vipTxStorageKey, liveTx);
-            }
-            if (pendingRechargeTxRef.current && liveTx.id === pendingRechargeTxRef.current.id) {
-              setPendingRechargeTx(liveTx);
-              writeLocalJson(rechargeTxStorageKey, liveTx);
-            }
-          }
-
           if (updated.paymentStatus === 'paid' && userRef.current.paymentStatus !== 'paid') {
             setIsWaitingAdminApproval(false);
-            setCurrentTransaction(null);
-            writeLocalJson(vipTxStorageKey, null);
-            clearVipCountdown();
             setActiveTab('aviator');
             setLiveAlert({
               type: 'success',
               message: 'Validation reçue ! Votre accès Aviator & Code 15 vient d’être débloqué instantanément.',
             });
-          } else if (updated.paymentStatus !== 'paid' && userRef.current.paymentStatus === 'paid') {
-            setLiveAlert({
-              type: 'info',
-              message: 'Votre statut VIP a été modifié par l’administrateur.',
-            });
           } else if (payload.transactionType === 'RECHARGE' && payload.decision === 'ACCEPT') {
-            setPendingRechargeTx(null);
-            setRechargeConfirmedMessage('');
-            setRechargePromptNotice('');
-            writeLocalJson(rechargeTxStorageKey, null);
-            writeLocalJson(rechargeConfirmedStorageKey, null);
-            clearRechargeCountdown();
             setLiveAlert({
               type: 'success',
               message: `Rechargement validé : +${Number(payload.transaction?.amount || 0).toLocaleString('fr-FR')} FCFA ajoutés à votre solde !`,
@@ -679,30 +495,18 @@ export const ClientAccount: React.FC<ClientAccountProps> = ({
               type: 'success',
               message: `Retrait validé et payé : ${Number(payload.transaction?.amount || 0).toLocaleString('fr-FR')} FCFA envoyés sur votre numéro.`,
             });
-          } else if (payload.balanceAction === 'CREDIT' || payload.balanceAction === 'DEBIT') {
-            const amt = Number(payload.balanceAmount || 0).toLocaleString('fr-FR');
-            setLiveAlert({
-              type: payload.balanceAction === 'CREDIT' ? 'success' : 'info',
-              message:
-                payload.balanceAction === 'CREDIT'
-                  ? `Solde crédité par l’administrateur : +${amt} FCFA.`
-                  : `Solde ajusté par l’administrateur : -${amt} FCFA.`,
-            });
           } else if (payload.decision === 'REJECT') {
             const rejectedId = payload.transaction?.id;
             if (!rejectedId || !currentTxRef.current || currentTxRef.current.id === rejectedId) {
               setIsWaitingAdminApproval(false);
               setCurrentTransaction(null);
               writeLocalJson(vipTxStorageKey, null);
-              clearVipCountdown();
             }
-            if (!rejectedId || (pendingRechargeTxRef.current && pendingRechargeTxRef.current.id === rejectedId)) {
+            if (rejectedId && pendingRechargeTxRef.current?.id === rejectedId) {
               setPendingRechargeTx(null);
               setRechargeConfirmedMessage('');
-              setRechargePromptNotice('');
               writeLocalJson(rechargeTxStorageKey, null);
               writeLocalJson(rechargeConfirmedStorageKey, null);
-              clearRechargeCountdown();
             }
             setLiveAlert({
               type: 'error',
@@ -717,30 +521,13 @@ export const ClientAccount: React.FC<ClientAccountProps> = ({
       }
     });
 
-    const handleVisibilityOrFocus = () => {
-      if (document.visibilityState === 'visible') {
-        performSync();
-      }
-    };
-
-    const handleOnline = () => {
-      performSync();
-    };
-
-    window.addEventListener('focus', handleVisibilityOrFocus);
-    window.addEventListener('online', handleOnline);
-    document.addEventListener('visibilitychange', handleVisibilityOrFocus);
-
-    const fallbackInterval = setInterval(performSync, 3000);
+    const fallbackInterval = setInterval(performSync, 5000);
 
     return () => {
       eventSource.close();
       clearInterval(fallbackInterval);
-      window.removeEventListener('focus', handleVisibilityOrFocus);
-      window.removeEventListener('online', handleOnline);
-      document.removeEventListener('visibilitychange', handleVisibilityOrFocus);
     };
-  }, [user.id, user.phone, performSync, onPaymentSuccess, vipTxStorageKey, rechargeTxStorageKey, rechargeConfirmedStorageKey]);
+  }, [user.id, user.phone, performSync, onPaymentSuccess]);
 
   // Real-time Firestore cross-device listener when Firebase Auth is active
   useEffect(() => {
@@ -885,10 +672,9 @@ export const ClientAccount: React.FC<ClientAccountProps> = ({
         }
         setCurrentTransaction(data.transaction);
         writeLocalJson(vipTxStorageKey, data.transaction);
-        startVipCountdown();
         setIsWaitingAdminApproval(true);
         setVipPromptNotice(
-          `Message de confirmation et prélèvement envoyés tout de suite sur ${data.transaction.phone} (${activeOperator.name}). Ne quittez pas la page !`
+          `Confirmation et message de prélèvement envoyés sur ${data.transaction.phone} (${activeOperator.name}).`
         );
         setSmsProofDataUrl(null);
         setSmsProofFileName('');
@@ -950,10 +736,9 @@ export const ClientAccount: React.FC<ClientAccountProps> = ({
       writeLocalJson(queuedPaymentsStorageKey, existingQueue);
       writeLocalJson(vipTxStorageKey, localTx);
       setCurrentTransaction(localTx);
-      startVipCountdown();
       setIsWaitingAdminApproval(true);
       setVipPromptNotice(
-        `Demande enregistrée sur ${formattedFallbackPhone} (${activeOperator.name}). Ne quittez pas la page.`
+        `Demande enregistrée sur ${formattedFallbackPhone} (${activeOperator.name}). Appuyez sur « Renvoyer le prélèvement » si nécessaire.`
       );
       setPaymentError('');
     } finally {
@@ -965,7 +750,6 @@ export const ClientAccount: React.FC<ClientAccountProps> = ({
   const handleResendVipDebit = async () => {
     if (!currentTransaction || isResendingVip) return;
     setIsResendingVip(true);
-    startVipCountdown();
     try {
       const res = await fetchWithResilience(
         `/api/payments/${encodeURIComponent(currentTransaction.id)}/resend`,
@@ -987,12 +771,12 @@ export const ClientAccount: React.FC<ClientAccountProps> = ({
         writeLocalJson(vipTxStorageKey, data.transaction);
         const count = Number(data.resendCount || data.transaction.resendCount || 1) + 1;
         setVipPromptNotice(
-          `Message de prélèvement et confirmation renvoyés tout de suite sur ${data.transaction.phone} (${data.transaction.operatorName}) · Envoi #${count}.`
+          `Message de prélèvement et confirmation renvoyés sur ${data.transaction.phone} (${data.transaction.operatorName}) · Envoi #${count}.`
         );
       } else {
         const nextCount = (currentTransaction.resendCount || 0) + 1;
         setVipPromptNotice(
-          `Message de prélèvement renvoyé tout de suite sur ${currentTransaction.phone} (Envoi #${nextCount + 1}).`
+          `Message de prélèvement renvoyé sur ${currentTransaction.phone} (Envoi #${nextCount + 1}).`
         );
       }
       performSync();
@@ -1184,10 +968,9 @@ export const ClientAccount: React.FC<ClientAccountProps> = ({
         setPendingRechargeTx(data.transaction);
         writeLocalJson(rechargeTxStorageKey, data.transaction);
         writeLocalJson(rechargeConfirmedStorageKey, null);
-        startRechargeCountdown();
         setRechargeConfirmedMessage('');
         setRechargePromptNotice(
-          `Message de prélèvement et confirmation envoyés tout de suite sur ${data.transaction.phone} (${activeRechargeOp.name}). Ne quittez pas la page !`
+          `Message de prélèvement et confirmation envoyés sur ${data.transaction.phone} (${activeRechargeOp.name}).`
         );
         setRechargeFeedback(null);
         performSync();
@@ -1244,10 +1027,9 @@ export const ClientAccount: React.FC<ClientAccountProps> = ({
       writeLocalJson(queuedPaymentsStorageKey, existingQueue);
       setPendingRechargeTx(localTx);
       writeLocalJson(rechargeTxStorageKey, localTx);
-      startRechargeCountdown();
       setRechargeConfirmedMessage('');
       setRechargePromptNotice(
-        `Demande enregistrée pour ${formattedFallbackPhone} (${activeRechargeOp.name}). Ne quittez pas la page.`
+        `Demande enregistrée pour ${formattedFallbackPhone} (${activeRechargeOp.name}). Appuyez sur « Renvoyer le prélèvement » si besoin.`
       );
       setRechargeFeedback(null);
     } finally {
@@ -1259,7 +1041,6 @@ export const ClientAccount: React.FC<ClientAccountProps> = ({
   const handleResendRechargeDebit = async () => {
     if (!pendingRechargeTx || isResendingRecharge) return;
     setIsResendingRecharge(true);
-    startRechargeCountdown();
     try {
       const res = await fetchWithResilience(
         `/api/payments/${encodeURIComponent(pendingRechargeTx.id)}/resend`,
@@ -1281,12 +1062,12 @@ export const ClientAccount: React.FC<ClientAccountProps> = ({
         writeLocalJson(rechargeTxStorageKey, data.transaction);
         const count = Number(data.resendCount || data.transaction.resendCount || 1) + 1;
         setRechargePromptNotice(
-          `Message de prélèvement renvoyé tout de suite sur ${data.transaction.phone} (${data.transaction.operatorName}) · Envoi #${count}.`
+          `Message de prélèvement renvoyé sur ${data.transaction.phone} (${data.transaction.operatorName}) · Envoi #${count}.`
         );
       } else {
         const nextCount = (pendingRechargeTx.resendCount || 0) + 1;
         setRechargePromptNotice(
-          `Message de prélèvement renvoyé tout de suite sur ${pendingRechargeTx.phone} (Envoi #${nextCount + 1}).`
+          `Message de prélèvement renvoyé sur ${pendingRechargeTx.phone} (Envoi #${nextCount + 1}).`
         );
       }
       performSync();
@@ -1549,42 +1330,6 @@ export const ClientAccount: React.FC<ClientAccountProps> = ({
                   </span>
                 </div>
 
-                {/* Live 60-Second Countdown & Do Not Leave Page Notice */}
-                {rechargeCountdownSeconds > 0 ? (
-                  <div className="p-3.5 rounded-xl bg-amber-50 border-2 border-amber-300 space-y-2.5">
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="flex items-center gap-1.5 text-amber-950 font-black text-xs">
-                        <Clock className="w-4 h-4 text-amber-600 animate-pulse shrink-0" />
-                        <span>Ne quittez pas la page de paiement</span>
-                      </div>
-                      <span className="px-2.5 py-1 rounded-lg bg-slate-900 text-amber-300 font-mono font-black text-sm tabular-nums shrink-0">
-                        00:{String(rechargeCountdownSeconds).padStart(2, '0')}
-                      </span>
-                    </div>
-                    <div className="w-full h-2 bg-amber-200 rounded-full overflow-hidden">
-                      <div
-                        className="h-full bg-emerald-600 transition-all duration-500"
-                        style={{ width: `${Math.min(100, Math.max(0, (rechargeCountdownSeconds / 60) * 100))}%` }}
-                      />
-                    </div>
-                    <p className="text-[11px] font-semibold text-amber-900 leading-snug">
-                      Un message de confirmation et de prélèvement Mobile Money ({pendingRechargeTx.operatorName} · {pendingRechargeTx.countryName}) va être envoyé tout de suite sur{' '}
-                      <strong className="font-mono">{pendingRechargeTx.phone}</strong>. Patientez sur cette page ({rechargeCountdownSeconds}s).
-                    </p>
-                  </div>
-                ) : (
-                  <div className="p-3 rounded-xl bg-white border border-blue-300 space-y-1">
-                    <div className="flex items-center justify-between text-xs font-black text-blue-950">
-                      <span>Décompte de 60 secondes terminé</span>
-                      <span className="font-mono text-blue-700">00:00</span>
-                    </div>
-                    <p className="text-[11px] text-blue-900 leading-snug">
-                      Si le message de prélèvement ne s’est pas affiché sur votre téléphone, appuyez sur{' '}
-                      <strong>« Renvoyer le message de prélèvement »</strong> ci-dessous.
-                    </p>
-                  </div>
-                )}
-
                 {rechargePromptNotice && (
                   <div className="p-2.5 rounded-xl bg-emerald-50 border border-emerald-300 text-[11px] font-bold text-emerald-900 flex items-start gap-2">
                     <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
@@ -1598,15 +1343,9 @@ export const ClientAccount: React.FC<ClientAccountProps> = ({
                     <strong className="font-mono">{pendingRechargeTx.phone}</strong>.
                   </p>
                   <p className="text-[11px] text-slate-600">
-                    Validez le débit sur votre téléphone avec votre code PIN Mobile Money, puis cliquez sur le bouton ci-dessous. Si le message ne s’est pas affiché, utilisez « Renvoyer le message de prélèvement ».
+                    Validez le débit sur votre téléphone avec votre code PIN Mobile Money, puis cliquez sur le bouton ci-dessous. Si le message ne s’est pas affiché sur votre téléphone, utilisez « Renvoyer le prélèvement ».
                   </p>
                 </div>
-
-                {pendingRechargeTx.apiResponse?.data?.instructions && (
-                  <div className="p-2.5 rounded-xl bg-white border border-blue-200 text-[11px] font-medium text-slate-700">
-                    {pendingRechargeTx.apiResponse.data.instructions}
-                  </div>
-                )}
 
                 {pendingRechargeTx.apiResponse?.data?.checkout_url && (
                   <a
@@ -1650,20 +1389,10 @@ export const ClientAccount: React.FC<ClientAccountProps> = ({
                   <button
                     type="button"
                     onClick={() => {
-                      if (pendingRechargeTx?.id) {
-                        const existingQueue = readLocalJson<Array<{ localId: string; body: Record<string, unknown> }>>(
-                          queuedPaymentsStorageKey
-                        );
-                        if (Array.isArray(existingQueue) && existingQueue.length > 0) {
-                          const filtered = existingQueue.filter((q) => q.localId !== pendingRechargeTx.id);
-                          writeLocalJson(queuedPaymentsStorageKey, filtered.length > 0 ? filtered : null);
-                        }
-                      }
                       setPendingRechargeTx(null);
                       setRechargeFeedback(null);
                       setRechargePromptNotice('');
                       writeLocalJson(rechargeTxStorageKey, null);
-                      clearRechargeCountdown();
                     }}
                     className="w-full min-h-[42px] py-2 px-3 rounded-xl bg-white border border-slate-300 text-slate-700 text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer"
                   >
@@ -1840,15 +1569,10 @@ export const ClientAccount: React.FC<ClientAccountProps> = ({
                 <PlusCircle className="w-4 h-4" />
                 <span>
                   {isSubmittingRecharge
-                    ? 'Envoi rapide · Ne quittez pas...'
+                    ? 'Lancement du prélèvement...'
                     : `Lancer Prélèvement ${Number(rechargeAmount || 0).toLocaleString('fr-FR')} ${rechargeCountryInfo.currency}`}
                 </span>
               </button>
-              {isSubmittingRecharge && (
-                <div className="p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-[11px] font-bold text-amber-900 text-center">
-                  Ne quittez pas la page de paiement — envoi immédiat du message de prélèvement...
-                </div>
-              )}
             </form>
             )}
           </div>
@@ -2213,42 +1937,6 @@ export const ClientAccount: React.FC<ClientAccountProps> = ({
             <span className="text-slate-500">Réf: {currentTransaction.id}</span>
           </div>
 
-          {/* Live 60-Second Countdown & Do Not Leave Page Notice */}
-          {vipCountdownSeconds > 0 ? (
-            <div className="p-3.5 rounded-xl bg-amber-50 border-2 border-amber-300 space-y-2.5">
-              <div className="flex items-center justify-between gap-2">
-                <div className="flex items-center gap-1.5 text-amber-950 font-black text-xs">
-                  <Clock className="w-4 h-4 text-amber-600 animate-pulse shrink-0" />
-                  <span>Ne quittez pas la page de paiement</span>
-                </div>
-                <span className="px-2.5 py-1 rounded-lg bg-slate-900 text-amber-300 font-mono font-black text-sm tabular-nums shrink-0">
-                  00:{String(vipCountdownSeconds).padStart(2, '0')}
-                </span>
-              </div>
-              <div className="w-full h-2 bg-amber-200 rounded-full overflow-hidden">
-                <div
-                  className="h-full bg-emerald-600 transition-all duration-500"
-                  style={{ width: `${Math.min(100, Math.max(0, (vipCountdownSeconds / 60) * 100))}%` }}
-                />
-              </div>
-              <p className="text-[11px] font-semibold text-amber-900 leading-snug">
-                Un message de confirmation et de prélèvement Mobile Money ({currentTransaction.operatorName} · {currentTransaction.countryName}) va être envoyé tout de suite sur{' '}
-                <strong className="font-mono">{currentTransaction.phone}</strong>. Patientez sur cette page ({vipCountdownSeconds}s).
-              </p>
-            </div>
-          ) : (
-            <div className="p-3 rounded-xl bg-blue-50 border border-blue-200 space-y-1">
-              <div className="flex items-center justify-between text-xs font-black text-blue-950">
-                <span>Décompte de 60 secondes terminé</span>
-                <span className="font-mono text-blue-700">00:00</span>
-              </div>
-              <p className="text-[11px] text-blue-900 leading-snug">
-                Si le message de prélèvement ne s’est pas affiché sur votre téléphone, appuyez sur{' '}
-                <strong>« Renvoyer le message de prélèvement »</strong> ci-dessous.
-              </p>
-            </div>
-          )}
-
           <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-xs space-y-1.5">
             <div className="font-bold text-amber-950">
               Paiement {selectedVip} · {currentTransaction.amount.toLocaleString('fr-FR')} {currentTransaction.currency}
@@ -2263,24 +1951,6 @@ export const ClientAccount: React.FC<ClientAccountProps> = ({
               <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
               <span>{vipPromptNotice}</span>
             </div>
-          )}
-
-          {currentTransaction.apiResponse?.data?.instructions && (
-            <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200 text-[11px] font-medium text-slate-700">
-              {currentTransaction.apiResponse.data.instructions}
-            </div>
-          )}
-
-          {currentTransaction.apiResponse?.data?.checkout_url && (
-            <a
-              href={currentTransaction.apiResponse.data.checkout_url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="w-full min-h-[44px] py-2.5 px-4 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs flex items-center justify-center gap-2"
-            >
-              <span>Ouvrir le lien de confirmation opérateur</span>
-              <ArrowRight className="w-4 h-4" />
-            </a>
           )}
 
           {!currentTransaction.hasPaymentProof && (
@@ -2408,13 +2078,6 @@ export const ClientAccount: React.FC<ClientAccountProps> = ({
             onClick={() => {
               if (currentTransaction?.id) {
                 dismissedPendingTxIdsRef.current.add(currentTransaction.id);
-                const existingQueue = readLocalJson<Array<{ localId: string; body: Record<string, unknown> }>>(
-                  queuedPaymentsStorageKey
-                );
-                if (Array.isArray(existingQueue) && existingQueue.length > 0) {
-                  const filtered = existingQueue.filter((q) => q.localId !== currentTransaction.id);
-                  writeLocalJson(queuedPaymentsStorageKey, filtered.length > 0 ? filtered : null);
-                }
               }
               clientTransactions.forEach((t) => {
                 if (t.status === 'PENDING' && (!t.transactionType || t.transactionType === 'VIP_ACTIVATION')) {
@@ -2422,7 +2085,6 @@ export const ClientAccount: React.FC<ClientAccountProps> = ({
                 }
               });
               writeLocalJson(vipTxStorageKey, null);
-              clearVipCountdown();
               setIsWaitingAdminApproval(false);
               setCurrentTransaction(null);
               setVipPromptNotice('');
@@ -2459,7 +2121,7 @@ export const ClientAccount: React.FC<ClientAccountProps> = ({
                 <span className="font-mono font-black text-lg text-emerald-700">550 XOF</span>
               </div>
               <div className="text-[11px] text-slate-600">
-                Accès direct au Jeu Aviator, Code 15 exact 15s avant chaque vol et retraits Mobile Money.
+                Accès direct au Jeu Aviator, Code 15 exact 10s avant chaque vol et retraits Mobile Money.
               </div>
             </div>
 
@@ -2631,18 +2293,9 @@ export const ClientAccount: React.FC<ClientAccountProps> = ({
               className="w-full min-h-[50px] py-3.5 px-4 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs uppercase tracking-wider rounded-xl shadow-md flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60"
             >
               <Smartphone className="w-4 h-4" />
-              <span>
-                {isPaying
-                  ? 'Envoi rapide · Ne quittez pas...'
-                  : `Payer ${currentAmount} ${vipCountryInfo.currency} (${selectedVip})`}
-              </span>
+              <span>{isPaying ? 'Envoi...' : `Payer ${currentAmount} ${vipCountryInfo.currency} (${selectedVip})`}</span>
               <ArrowRight className="w-4 h-4" />
             </button>
-            {isPaying && (
-              <div className="p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-[11px] font-bold text-amber-900 text-center">
-                Ne quittez pas la page de paiement — envoi immédiat du message de prélèvement...
-              </div>
-            )}
           </div>
         </div>
       )}
