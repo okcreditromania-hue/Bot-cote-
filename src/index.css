@@ -7,18 +7,41 @@
   --font-mono: 'JetBrains Mono', monospace;
 }
 
-/* Custom scrollbar for dark tech aesthetic */
+html,
+body {
+  max-width: 100%;
+  overflow-x: hidden;
+  touch-action: manipulation;
+  -webkit-text-size-adjust: 100%;
+  -ms-text-size-adjust: 100%;
+  overscroll-behavior-x: none;
+}
+
+/* Prevent iOS Safari input auto-zoom */
+input,
+select,
+textarea {
+  font-size: 16px;
+}
+
+/* Hide horizontal scrollbar on mobile pill strips while preserving scroll */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* Custom scrollbar */
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 4px;
+  height: 4px;
 }
 ::-webkit-scrollbar-track {
-  background: #090d16;
+  background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: #1e293b;
+  background: #cbd5e1;
   border-radius: 9999px;
-}
-::-webkit-scrollbar-thumb:hover {
-  background: #334155;
 }

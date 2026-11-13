@@ -1,7 +1,9 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { User, VIPPlanId } from '../types';
 import { WEST_AFRICA_COUNTRIES, WEST_AFRICA_BOOKMAKERS, StorageService } from '../services/storage';
 import { ClientVideoSection } from './ClientVideoSection';
+import { useFirebase } from '../firebase/FirebaseContext';
+import { ADMIN_EMAIL } from '../firebase/firestoreService';
 import {
   Sparkles,
   Lock,
@@ -21,13 +23,21 @@ import {
 interface AuthPageProps {
   initialTab?: 'login' | 'register';
   onAuthSuccess: (user: User) => void;
+  onAdminLoginSuccess?: () => void;
 }
 
 export const AuthPage: React.FC<AuthPageProps> = ({
   initialTab = 'register',
   onAuthSuccess,
+  onAdminLoginSuccess,
 }) => {
+  const { signInWithGooglePopup, syncClientWithFirestore, syncAdminBidirectional } = useFirebase();
   const [activeTab, setActiveTab] = useState<'login' | 'register'>(initialTab);
+  const [isGoogleLoading, setIsGoogleLoading] = useState(false);
+
+  useEffect(() => {
+    setActiveTab(initialTab);
+  }, [initialTab]);
 
   // Registration Form states (Always virgin/blank by default)
   const [fullName, setFullName] = useState('');
@@ -35,6 +45,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({
   const [phonePrefix, setPhonePrefix] = useState(WEST_AFRICA_COUNTRIES[0].code);
   const [phoneNumber, setPhoneNumber] = useState('');
   const [bookmaker, setBookmaker] = useState(WEST_AFRICA_BOOKMAKERS[0].name);
+  const [bookmakerUserId, setBookmakerUserId] = useState('');
   const [selectedVip, setSelectedVip] = useState<VIPPlanId>('VIP1');
   const [registerPassword, setRegisterPassword] = useState('');
   const [showRegisterPassword, setShowRegisterPassword] = useState(false);
@@ -48,6 +59,49 @@ export const AuthPage: React.FC<AuthPageProps> = ({
   const [errorMessage, setErrorMessage] = useState('');
   const [copiedLink, setCopiedLink] = useState(false);
 
+  const handleGoogleAuth = async () => {
+    setErrorMessage('');
+    setIsGoogleLoading(true);
+    try {
+      const fbUser = await signInWithGooglePopup();
+      if (!fbUser) {
+        setIsGoogleLoading(false);
+        return;
+      }
+
+      if (fbUser.email === ADMIN_EMAIL && fbUser.emailVerified) {
+        const idToken = await fbUser.getIdToken();
+        const res = await fetch('/api/admin/google-login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ idToken }),
+        });
+        if (res.ok) {
+          localStorage.setItem('saspay_admin_auth', 'authenticated_34343434');
+          localStorage.setItem('saspay_admin_user', fbUser.email);
+          await syncAdminBidirectional();
+          if (onAdminLoginSuccess) {
+            onAdminLoginSuccess();
+          }
+          return;
+        }
+      }
+
+      const synced = await syncClientWithFirestore(null);
+      if (synced?.user) {
+        StorageService.addUser(synced.user);
+        StorageService.setCurrentUser(synced.user);
+        onAuthSuccess(synced.user);
+      } else {
+        setErrorMessage('Impossible de synchroniser le compte Google pour le moment.');
+      }
+    } catch (err: any) {
+      setErrorMessage(err?.message || 'Connexion Google interrompue.');
+    } finally {
+      setIsGoogleLoading(false);
+    }
+  };
+
   const handleCountryChange = (cName: string) => {
     setCountry(cName);
     const found = WEST_AFRICA_COUNTRIES.find((c) => c.name === cName);
@@ -55,15 +109,15 @@ export const AuthPage: React.FC<AuthPageProps> = ({
   };
 
   const handleCopyPublicLink = () => {
-    const url = window.location.origin + window.location.pathname;
+    const url = `${window.location.origin}${window.location.pathname}#auth`;
     navigator.clipboard.writeText(url).then(() => {
       setCopiedLink(true);
       setTimeout(() => setCopiedLink(false), 2500);
     });
   };
 
-  // 1. Submit Registration with Secret Password
-  const handleRegister = (e: React.FormEvent) => {
+  // 1. Submit Registration with Secret Password (Saved directly to server database)
+  const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage('');
 
@@ -74,6 +128,11 @@ export const AuthPage: React.FC<AuthPageProps> = ({
 
     if (!phoneNumber.trim() || phoneNumber.replace(/[^0-9]/g, '').length < 6) {
       setErrorMessage('Veuillez renseigner un numéro de téléphone valide.');
+      return;
+    }
+
+    if (!bookmakerUserId.trim()) {
+      setErrorMessage(`Veuillez saisir votre ID de compte ${bookmaker}.`);
       return;
     }
 
@@ -92,79 +151,145 @@ export const AuthPage: React.FC<AuthPageProps> = ({
       password: registerPassword.trim(),
       country,
       bookmaker,
+      bookmakerUserId: bookmakerUserId.trim(),
       vipTier: selectedVip,
       paymentStatus: 'unpaid',
+      balance: 0,
       registeredAt: new Date().toLocaleString('fr-FR'),
       notes: `Place réservée pour le ${selectedVip} sur ${bookmaker}`,
     };
 
-    const saved = StorageService.addUser(newUser);
-    StorageService.setCurrentUser(saved);
-    onAuthSuccess(saved);
+    try {
+      const response = await fetch('/api/auth/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          fullName: fullName.trim(),
+          phone: fullPhone,
+          password: registerPassword.trim(),
+          country,
+          bookmaker,
+          bookmakerUserId: bookmakerUserId.trim(),
+          vipTier: selectedVip,
+        }),
+      });
+
+      const data = await response.json();
+      const userToSave = (response.ok && data.success && data.user) ? data.user : newUser;
+      StorageService.addUser(userToSave);
+      StorageService.setCurrentUser(userToSave);
+      onAuthSuccess(userToSave);
+    } catch {
+      // Offline fallback
+      const saved = StorageService.addUser(newUser);
+      StorageService.setCurrentUser(saved);
+      onAuthSuccess(saved);
+    }
   };
 
-  // 2. Submit Confidential Login
+  // 2. Submit Confidential Login (Supports Client accounts AND Admin 34343434)
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage('');
 
-    if (!loginPhone.trim()) {
+    const trimmedPhone = loginPhone.trim();
+    const trimmedPass = loginPassword.trim();
+    const compactPhone = trimmedPhone.replace(/\s+/g, '');
+    const compactPass = trimmedPass.replace(/\s+/g, '');
+
+    if (!trimmedPhone) {
       setErrorMessage('Veuillez renseigner votre numéro de téléphone.');
       return;
     }
 
-    if (!loginPassword.trim()) {
+    if (!trimmedPass) {
       setErrorMessage('Veuillez renseigner votre mot de passe.');
+      return;
+    }
+
+    // Direct instant check for Administrator Credentials (34343434 / 34343434)
+    if (compactPhone === '34343434' && compactPass === '34343434') {
+      localStorage.setItem('saspay_admin_auth', 'authenticated_34343434');
+      localStorage.setItem('saspay_admin_user', '34343434');
+      if (onAdminLoginSuccess) {
+        onAdminLoginSuccess();
+      } else {
+        window.location.hash = '#admin';
+        window.location.reload();
+      }
       return;
     }
 
     setIsSubmittingLogin(true);
 
     try {
-      // 1. Check with server login endpoint
+      // 1. Verify with server login endpoint
       const response = await fetch('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phone: loginPhone, password: loginPassword }),
+        body: JSON.stringify({ phone: trimmedPhone, password: trimmedPass }),
       });
 
       const data = await response.json();
 
-      if (response.ok && data.success && data.user) {
-        StorageService.setCurrentUser(data.user);
-        onAuthSuccess(data.user);
-        return;
+      if (response.ok && data.success) {
+        if (data.isAdmin) {
+          localStorage.setItem('saspay_admin_auth', 'authenticated_34343434');
+          localStorage.setItem('saspay_admin_user', '34343434');
+          if (onAdminLoginSuccess) {
+            onAdminLoginSuccess();
+          } else {
+            window.location.hash = '#admin';
+            window.location.reload();
+          }
+          return;
+        }
+
+        if (data.user) {
+          StorageService.setCurrentUser(data.user);
+          onAuthSuccess(data.user);
+          return;
+        }
       }
 
       // 2. Fallback check local storage
-      const cleanInput = loginPhone.replace(/[^0-9]/g, '');
+      const cleanInput = trimmedPhone.replace(/[^0-9]/g, '');
       const localUsers = StorageService.getUsers();
       const matched = localUsers.find((u) => {
-        const uPhone = u.phone.replace(/[^0-9]/g, '');
-        return uPhone === cleanInput || uPhone.endsWith(cleanInput) || cleanInput.endsWith(uPhone);
+        const uPhone = (u.phone || '').replace(/[^0-9]/g, '');
+        if (!uPhone || !cleanInput) return false;
+        if (uPhone === cleanInput) return true;
+        if (cleanInput.length >= 8 && uPhone.length >= 8) {
+          if (cleanInput.slice(-8) === uPhone.slice(-8)) return true;
+        }
+        return uPhone.endsWith(cleanInput) || cleanInput.endsWith(uPhone);
       });
 
       if (matched) {
         const expected = matched.password || 'password123';
-        if (loginPassword.trim() === expected.trim()) {
+        if (trimmedPass === expected.trim()) {
           StorageService.setCurrentUser(matched);
           onAuthSuccess(matched);
           return;
         }
       }
 
-      // If credentials do not match, give private neutral error (never expose other accounts)
-      setErrorMessage('Numéro de téléphone ou mot de passe incorrect.');
+      setErrorMessage(data.message || 'Numéro de téléphone ou mot de passe incorrect.');
     } catch {
       // Offline fallback
-      const cleanInput = loginPhone.replace(/[^0-9]/g, '');
+      const cleanInput = trimmedPhone.replace(/[^0-9]/g, '');
       const localUsers = StorageService.getUsers();
       const matched = localUsers.find((u) => {
-        const uPhone = u.phone.replace(/[^0-9]/g, '');
-        return uPhone === cleanInput || uPhone.endsWith(cleanInput) || cleanInput.endsWith(uPhone);
+        const uPhone = (u.phone || '').replace(/[^0-9]/g, '');
+        if (!uPhone || !cleanInput) return false;
+        if (uPhone === cleanInput) return true;
+        if (cleanInput.length >= 8 && uPhone.length >= 8) {
+          if (cleanInput.slice(-8) === uPhone.slice(-8)) return true;
+        }
+        return uPhone.endsWith(cleanInput) || cleanInput.endsWith(uPhone);
       });
 
-      if (matched && loginPassword.trim() === (matched.password || 'password123').trim()) {
+      if (matched && trimmedPass === (matched.password || 'password123').trim()) {
         StorageService.setCurrentUser(matched);
         onAuthSuccess(matched);
       } else {
@@ -176,58 +301,69 @@ export const AuthPage: React.FC<AuthPageProps> = ({
   };
 
   return (
-    <div className="py-8 max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 space-y-8">
+    <div className="py-4 px-3 space-y-4">
       {/* 1. YOUTUBE VIDEO SECTION (Clean, nothing written on top) */}
       <ClientVideoSection />
 
-      {/* 2. Direct Public Link Banner (Shareable) */}
-      <div className="bg-gradient-to-r from-emerald-50 via-teal-50 to-blue-50 border border-emerald-200/80 rounded-2xl p-4 sm:p-5 flex flex-col sm:flex-row items-center justify-between gap-4 shadow-xs">
-        <div className="space-y-0.5 text-center sm:text-left">
-          <div className="flex items-center justify-center sm:justify-start gap-2 text-xs font-mono font-bold text-emerald-800">
-            <Share2 className="w-3.5 h-3.5 text-emerald-600" />
-            <span>LIEN PUBLIC DIRECT OFFICIEL</span>
-          </div>
-          <p className="text-xs text-slate-600">
-            Ce lien redirige toujours vos clients directement sur cette page d'inscription et de connexion sécurisée.
-          </p>
+      {/* 2. Official Reservation & Renewal Banner */}
+      <div className="bg-gradient-to-r from-emerald-600 via-teal-600 to-blue-600 rounded-2xl p-4 text-white shadow-md space-y-2">
+        <div className="flex items-center justify-between gap-2 text-[10px] font-mono font-bold">
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-white/20">
+            <Sparkles className="w-3 h-3 text-amber-300" />
+            PLATEFORME OFFICIELLE VIP
+          </span>
+          <span className="text-emerald-100">100% Vérifié</span>
         </div>
+        <h2 className="text-base font-black tracking-tight text-white">
+          Réservez ou Renouvelez Votre Place VIP Aviator
+        </h2>
+        <p className="text-xs text-emerald-50 leading-relaxed">
+          Inscription, réservation et renouvellement VIP pour le jeu Aviator (1xBet, Premier Bet, Paripesa, Melbet et Betwinner). Validation administrative en direct.
+        </p>
+      </div>
 
+      {/* 3. Direct Public Link Banner (Shareable) */}
+      <div className="bg-white border border-emerald-200 rounded-2xl p-3.5 flex flex-col gap-2.5 shadow-2xs">
+        <div className="flex items-center gap-1.5 text-[11px] font-mono font-bold text-emerald-800">
+          <Share2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+          <span>LIEN PUBLIC DIRECT OFFICIEL</span>
+        </div>
         <button
           onClick={handleCopyPublicLink}
-          className="flex items-center gap-2 px-4 py-2 bg-white hover:bg-emerald-600 hover:text-white text-emerald-700 font-bold text-xs rounded-xl border border-emerald-300 shadow-xs transition-all cursor-pointer shrink-0"
+          className="w-full min-h-[42px] flex items-center justify-center gap-2 px-3 py-2 bg-emerald-50 hover:bg-emerald-600 hover:text-white text-emerald-800 font-bold text-xs rounded-xl border border-emerald-200 transition-colors cursor-pointer"
         >
           {copiedLink ? (
             <>
-              <Check className="w-4 h-4 text-emerald-600" />
-              <span>Lien Copié dans le presse-papier !</span>
+              <Check className="w-4 h-4" />
+              <span>Lien Copié !</span>
             </>
           ) : (
             <>
               <Copy className="w-4 h-4" />
-              <span>Copier le lien public direct</span>
+              <span>Copier le lien d'inscription / connexion</span>
             </>
           )}
         </button>
       </div>
 
-      {/* 3. Inscription & Connexion Card (Day Mode - Confidential & Pure) */}
-      <div className="max-w-xl mx-auto bg-white border border-slate-200 rounded-2xl shadow-xl overflow-hidden">
+      {/* 4. Inscription & Connexion Card */}
+      <div className="bg-white border border-slate-200 rounded-2xl shadow-md overflow-hidden">
         {/* Top Tab Bar */}
-        <div className="flex border-b border-slate-200 bg-slate-50/70 p-2 gap-2">
+        <div className="flex border-b border-slate-200 bg-slate-50/70 p-1.5 gap-1.5">
           <button
             type="button"
             onClick={() => {
               setActiveTab('register');
               setErrorMessage('');
             }}
-            className={`flex-1 py-3 text-xs font-bold rounded-xl transition-all flex items-center justify-center gap-2 cursor-pointer ${
+            className={`flex-1 min-h-[44px] py-2.5 text-xs font-bold rounded-xl transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
               activeTab === 'register'
-                ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-md'
+                ? 'bg-emerald-600 text-white shadow-xs'
                 : 'text-slate-600 hover:text-slate-900 bg-transparent'
             }`}
           >
             <Sparkles className="w-3.5 h-3.5" />
-            <span>Réserver ma place (Inscription)</span>
+            <span>Inscription</span>
           </button>
 
           <button
@@ -236,19 +372,19 @@ export const AuthPage: React.FC<AuthPageProps> = ({
               setActiveTab('login');
               setErrorMessage('');
             }}
-            className={`flex-1 py-3 text-xs font-bold rounded-xl transition-all flex items-center justify-center gap-2 cursor-pointer ${
+            className={`flex-1 min-h-[44px] py-2.5 text-xs font-bold rounded-xl transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
               activeTab === 'login'
-                ? 'bg-blue-600 text-white shadow-md'
+                ? 'bg-blue-600 text-white shadow-xs'
                 : 'text-slate-600 hover:text-slate-900 bg-transparent'
             }`}
           >
             <Lock className="w-3.5 h-3.5" />
-            <span>Connexion Client</span>
+            <span>Connexion</span>
           </button>
         </div>
 
         {errorMessage && (
-          <div className="mx-6 mt-4 p-3.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs flex items-center gap-2">
+          <div className="mx-4 mt-3 p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs flex items-center gap-2">
             <ShieldAlert className="w-4 h-4 shrink-0 text-rose-600" />
             <span>{errorMessage}</span>
           </div>
@@ -256,9 +392,9 @@ export const AuthPage: React.FC<AuthPageProps> = ({
 
         {/* Tab 1: Registration Form with Secret Password */}
         {activeTab === 'register' ? (
-          <form onSubmit={handleRegister} className="p-6 sm:p-8 space-y-5">
+          <form onSubmit={handleRegister} className="p-4 space-y-4">
             <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1.5 uppercase tracking-wider">
+              <label className="block text-[11px] font-bold text-slate-700 mb-1 uppercase tracking-wider">
                 Nom complet du joueur
               </label>
               <input
@@ -267,14 +403,14 @@ export const AuthPage: React.FC<AuthPageProps> = ({
                 value={fullName}
                 onChange={(e) => setFullName(e.target.value)}
                 placeholder="Ex: Kouamé Jean-Marc"
-                className="w-full px-4 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:border-emerald-600 focus:bg-white transition-colors"
+                className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-slate-900 placeholder-slate-400 focus:outline-none focus:border-emerald-600 focus:bg-white transition-colors"
               />
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3">
               <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1.5 uppercase tracking-wider">
-                  Pays (Afrique de l'Ouest & Centrale)
+                  Pays (Zone CFA XOF)
                 </label>
                 <select
                   value={country}
@@ -283,7 +419,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({
                 >
                   {WEST_AFRICA_COUNTRIES.map((c) => (
                     <option key={c.code + c.name} value={c.name}>
-                      {c.flag} {c.name} ({c.code})
+                      {c.flag} {c.name} ({c.currency} · {c.code})
                     </option>
                   ))}
                 </select>
@@ -327,6 +463,24 @@ export const AuthPage: React.FC<AuthPageProps> = ({
               </select>
             </div>
 
+            {/* Betting Site ID Field (Required before future deposits) */}
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1.5 uppercase tracking-wider">
+                ID de votre compte {bookmaker}
+              </label>
+              <input
+                type="text"
+                required
+                value={bookmakerUserId}
+                onChange={(e) => setBookmakerUserId(e.target.value)}
+                placeholder="Ex: 849201453"
+                className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl font-mono text-slate-900 placeholder-slate-400 focus:outline-none focus:border-emerald-600 focus:bg-white transition-colors"
+              />
+              <span className="text-[11px] text-slate-500 mt-1 block">
+                Cet ID sera vérifié avant chaque dépôt sur votre compte.
+              </span>
+            </div>
+
             {/* Password Creation Field */}
             <div>
               <label className="block text-xs font-bold text-slate-700 mb-1.5 uppercase tracking-wider">
@@ -360,7 +514,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({
               <label className="block text-xs font-bold text-slate-700 mb-2 uppercase tracking-wider">
                 Sélectionnez votre formule VIP (Montant automatique)
               </label>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 gap-3">
                 {/* VIP 1 */}
                 <div
                   onClick={() => setSelectedVip('VIP1')}
@@ -430,7 +584,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({
           </form>
         ) : (
           /* Tab 2: Connexion Client Sécurisée et Vierge (Aucun autre compte affiché - Confidentialité Totale) */
-          <form onSubmit={handleLogin} className="p-6 sm:p-8 space-y-5">
+          <form onSubmit={handleLogin} className="p-4 space-y-4">
             <div className="space-y-1 pb-1">
               <h3 className="text-sm font-bold text-slate-900">
                 Espace de Connexion Personnel
@@ -516,6 +670,31 @@ export const AuthPage: React.FC<AuthPageProps> = ({
             </button>
           </form>
         )}
+
+        {/* Firebase Google Auth & Cloud Sync Option (Works on both tabs cleanly) */}
+        <div className="px-4 pb-4 pt-1 border-t border-slate-100 space-y-2">
+          <div className="text-[10px] text-center font-mono uppercase text-slate-400">
+            Ou synchronisation Cloud permanente
+          </div>
+          <button
+            type="button"
+            onClick={handleGoogleAuth}
+            disabled={isGoogleLoading}
+            className="w-full min-h-[44px] py-2.5 px-4 bg-white hover:bg-slate-50 border border-slate-300 text-slate-800 font-bold text-xs rounded-xl flex items-center justify-center gap-2 shadow-2xs transition-colors cursor-pointer disabled:opacity-60"
+          >
+            {isGoogleLoading ? (
+              <div className="w-4 h-4 rounded-full border-2 border-slate-600 border-t-transparent animate-spin" />
+            ) : (
+              <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24">
+                <path fill="#4285F4" d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.665-5.17 3.665-9.17Z" />
+                <path fill="#34A853" d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.11-6.72-4.96H1.29v3.14C3.26 21.3 7.37 24 12 24Z" />
+                <path fill="#FBBC05" d="M5.28 14.24c-.24-.72-.38-1.49-.38-2.24s.14-1.52.38-2.24V6.62H1.29C.47 8.24 0 10.06 0 12s.47 3.76 1.29 5.38l3.99-3.14Z" />
+                <path fill="#EA4335" d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.37 0 3.26 2.7 1.29 6.62l3.99 3.14c.95-2.85 3.6-4.96 6.72-4.96Z" />
+              </svg>
+            )}
+            <span>{isGoogleLoading ? 'Connexion Firebase...' : 'Continuer avec Google'}</span>
+          </button>
+        </div>
       </div>
     </div>
   );

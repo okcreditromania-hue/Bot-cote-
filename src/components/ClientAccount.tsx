@@ -1,17 +1,26 @@
-import React, { useState, useEffect } from 'react';
-import { User, VIPPlanId } from '../types';
-import { CountryInfo, Operator, TransactionRecord } from '../types/saspay';
-import { SUPPORTED_COUNTRIES } from '../data/countries';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import {
+  AviatorGameState,
+  ClientOperation,
+  User,
+  VIPPlanId,
+} from '../types';
+import { CountryCode, CountryInfo, Operator, TransactionRecord } from '../types/saspay';
+import { SUPPORTED_COUNTRIES, COUNTRIES_LIST, resolveCountryCode } from '../data/countries';
 import { ClientVideoSection } from './ClientVideoSection';
+import { AviatorGameDashboard } from './AviatorGameDashboard';
+import { useFirebase } from '../firebase/FirebaseContext';
+import {
+  subscribeClientFirestore,
+  upsertTransactionToFirestore,
+  upsertOperationToFirestore,
+} from '../firebase/firestoreService';
 import {
   Lock,
   ShieldCheck,
   Check,
   Smartphone,
-  ExternalLink,
-  Play,
   AlertCircle,
-  Radio,
   CheckCircle2,
   Clock,
   ArrowRight,
@@ -19,6 +28,12 @@ import {
   RefreshCw,
   Hourglass,
   ArrowLeft,
+  Receipt,
+  XCircle,
+  Plane,
+  PlusCircle,
+  ArrowDownToLine,
+  Wallet,
 } from 'lucide-react';
 
 interface ClientAccountProps {
@@ -27,134 +42,336 @@ interface ClientAccountProps {
   onLogout: () => void;
 }
 
+type ClientTab = 'aviator' | 'recharge' | 'withdraw' | 'operations';
+
 export const ClientAccount: React.FC<ClientAccountProps> = ({
   user,
   onPaymentSuccess,
   onLogout,
 }) => {
-  // Two VIP plans with fixed, automatic amounts as explicitly instructed
+  const [activeTab, setActiveTab] = useState<ClientTab>('aviator');
   const [selectedVip, setSelectedVip] = useState<VIPPlanId>(user.vipTier || 'VIP1');
 
-  // Country detection & operators
-  const detectedCountryCode = (user.country === 'Côte d’Ivoire' || user.country === 'CI')
-    ? 'CI'
-    : (user.country === 'Sénégal' || user.country === 'SN')
-    ? 'SN'
-    : (user.country === 'Togo' || user.country === 'TG')
-    ? 'TG'
-    : (user.country === 'Burkina Faso' || user.country === 'BF')
-    ? 'BF'
-    : (user.country === 'Cameroun' || user.country === 'CM')
-    ? 'CM'
-    : 'BJ';
+  // Country & active SasPay operators across all 8 UEMOA XOF countries
+  const initialCountryCode: CountryCode = resolveCountryCode(user.country);
 
-  const countryInfo: CountryInfo = SUPPORTED_COUNTRIES[detectedCountryCode] || SUPPORTED_COUNTRIES.BJ;
-  const [selectedOperator, setSelectedOperator] = useState<Operator>(countryInfo.operators[0]);
+  const [vipCountryCode, setVipCountryCode] = useState<CountryCode>(initialCountryCode);
+  const vipCountryInfo: CountryInfo = SUPPORTED_COUNTRIES[vipCountryCode] || SUPPORTED_COUNTRIES.BJ;
+  const [selectedOperator, setSelectedOperator] = useState<Operator | null>(
+    vipCountryInfo.operators[0] || null
+  );
+  const [vipCustomerName, setVipCustomerName] = useState(user.fullName || '');
   const [phone, setPhone] = useState(user.phone.replace(/[^0-9]/g, '').slice(-10) || '');
+  const [vipBookmakerId, setVipBookmakerId] = useState(user.bookmakerUserId || '');
 
-  // Payment execution state
+  // VIP Activation Checkout state
   const [isPaying, setIsPaying] = useState(false);
   const [paymentError, setPaymentError] = useState('');
   const [currentTransaction, setCurrentTransaction] = useState<TransactionRecord | null>(null);
   const [isWaitingAdminApproval, setIsWaitingAdminApproval] = useState(false);
-
-  // 60-Second Countdown Confirmation Screen State
   const [countdown, setCountdown] = useState<number>(60);
   const [hasUserConfirmedOnPhone, setHasUserConfirmedOnPhone] = useState(false);
+
+  // Live synced state (operations, transactions, aviator game)
+  const [clientTransactions, setClientTransactions] = useState<TransactionRecord[]>([]);
+  const [clientOperations, setClientOperations] = useState<ClientOperation[]>([]);
+  const [aviatorState, setAviatorState] = useState<AviatorGameState | null>(null);
+  const [liveAlert, setLiveAlert] = useState<{ type: 'success' | 'error' | 'info'; message: string } | null>(null);
+
+  // Wallet Recharge state (Zero fake deposit -> Admin validation required)
+  const [rechargeCountryCode, setRechargeCountryCode] = useState<CountryCode>(initialCountryCode);
+  const rechargeCountryInfo: CountryInfo = SUPPORTED_COUNTRIES[rechargeCountryCode] || SUPPORTED_COUNTRIES.BJ;
+  const [rechargeAmount, setRechargeAmount] = useState<string>('2000');
+  const [rechargeOperator, setRechargeOperator] = useState<Operator | null>(
+    rechargeCountryInfo.operators[0] || null
+  );
+  const [rechargeCustomerName, setRechargeCustomerName] = useState(user.fullName || '');
+  const [rechargePhone, setRechargePhone] = useState(user.phone.replace(/[^0-9]/g, '').slice(-10) || '');
+  const [depositBookmakerId, setDepositBookmakerId] = useState(user.bookmakerUserId || '');
+  const [isSubmittingRecharge, setIsSubmittingRecharge] = useState(false);
+  const [rechargeFeedback, setRechargeFeedback] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  // Wallet Withdrawal state (Minimum strictly 5 000 FCFA -> Admin validation required)
+  const [withdrawCountryCode, setWithdrawCountryCode] = useState<CountryCode>(initialCountryCode);
+  const withdrawCountryInfo: CountryInfo = SUPPORTED_COUNTRIES[withdrawCountryCode] || SUPPORTED_COUNTRIES.BJ;
+  const [withdrawAmount, setWithdrawAmount] = useState<string>('5000');
+  const [withdrawOperator, setWithdrawOperator] = useState<Operator | null>(
+    withdrawCountryInfo.operators[0] || null
+  );
+  const [withdrawPhone, setWithdrawPhone] = useState(user.phone.replace(/[^0-9]/g, '').slice(-10) || '');
+  const [isSubmittingWithdraw, setIsSubmittingWithdraw] = useState(false);
+  const [withdrawFeedback, setWithdrawFeedback] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  const userRef = useRef(user);
+  userRef.current = user;
+
+  const { firebaseUser, signInWithGooglePopup, syncClientWithFirestore } = useFirebase();
+  const [isLinkingCloud, setIsLinkingCloud] = useState(false);
+
+  const handleLinkCloudAccount = async () => {
+    setIsLinkingCloud(true);
+    try {
+      const fbUser = await signInWithGooglePopup();
+      if (fbUser) {
+        const synced = await syncClientWithFirestore(userRef.current);
+        if (synced?.user) {
+          onPaymentSuccess(synced.user);
+          setLiveAlert({
+            type: 'success',
+            message: 'Compte synchronisé avec Firebase Cloud Firestore sur tous vos appareils.',
+          });
+        }
+      }
+    } catch {
+      // ignore cancelled popup
+    } finally {
+      setIsLinkingCloud(false);
+    }
+  };
+
+  // Keep bookmaker ID and payer name synced cleanly if updated from server
+  useEffect(() => {
+    if (user.bookmakerUserId) {
+      setVipBookmakerId((prev) => prev || user.bookmakerUserId || '');
+      setDepositBookmakerId((prev) => prev || user.bookmakerUserId || '');
+    }
+    if (user.fullName) {
+      setVipCustomerName((prev) => prev || user.fullName);
+      setRechargeCustomerName((prev) => prev || user.fullName);
+    }
+  }, [user.bookmakerUserId, user.fullName]);
 
   const vip1Price = 550;
   const vip2Price = 1500;
   const currentAmount = selectedVip === 'VIP1' ? vip1Price : vip2Price;
   const isPaid = user.paymentStatus === 'paid';
+  const currentBalance = typeof user.balance === 'number' ? user.balance : 0;
 
-  // Configured bot link
-  const botRedirectUrl = 'https://t.me/AviatorPredictorBotVIP_bot';
-
-  // Check for existing pending transaction on mount
+  // 60-second timer countdown for VIP checkout
   useEffect(() => {
-    const checkPendingOnMount = async () => {
-      try {
-        const res = await fetch('/api/admin/pending-payments');
-        if (res.ok) {
-          const data = await res.json();
-          const cleanUserPhone = user.phone.replace(/[^0-9]/g, '');
-          const existingPending = data.pending?.find((t: any) =>
-            t.phone.replace(/[^0-9]/g, '').includes(cleanUserPhone) ||
-            cleanUserPhone.includes(t.phone.replace(/[^0-9]/g, ''))
-          );
-          if (existingPending) {
-            setCurrentTransaction(existingPending);
-            setIsWaitingAdminApproval(true);
-            setCountdown(60);
-          }
-        }
-      } catch (e) {
-        console.warn('Erreur vérification paiements initiaux:', e);
-      }
-    };
-
-    if (!isPaid) {
-      checkPendingOnMount();
-    }
-  }, [user.phone, isPaid]);
-
-  // 60-second timer countdown ticker
-  useEffect(() => {
-    let timer: NodeJS.Timeout;
-    if (isWaitingAdminApproval && countdown > 0) {
-      timer = setInterval(() => {
-        setCountdown((prev) => (prev > 0 ? prev - 1 : 0));
-      }, 1000);
-    }
+    if (!isWaitingAdminApproval || countdown <= 0) return;
+    const timer = setInterval(() => {
+      setCountdown((prev) => (prev > 0 ? prev - 1 : 0));
+    }, 1000);
     return () => clearInterval(timer);
   }, [isWaitingAdminApproval, countdown]);
 
-  // Polling for ADMIN APPROVAL (Checks real admin decision: ACCEPT or REJECT)
-  // NEVER auto-validates. Strict requirement: ONLY when administrator clicks Confirmer!
-  useEffect(() => {
-    let interval: NodeJS.Timeout;
-    if (currentTransaction && currentTransaction.status === 'PENDING') {
-      setIsWaitingAdminApproval(true);
-      interval = setInterval(async () => {
-        try {
-          const res = await fetch(`/api/payments/${currentTransaction.id}/verify`);
-          if (res.ok) {
-            const data = await res.json();
-            if (data.transaction) {
-              if (data.transaction.status === 'SUCCESS') {
-                setIsWaitingAdminApproval(false);
-                setCurrentTransaction(data.transaction);
-                const updated: User = {
-                  ...user,
-                  paymentStatus: 'paid',
-                  vipTier: selectedVip,
-                  amountPaid: currentAmount,
-                  paymentMethod: selectedOperator.brand as any,
-                  paymentReference: data.transaction.saspayPaymentId || data.transaction.id,
-                  paymentDate: new Date().toLocaleString('fr-FR'),
-                };
-                onPaymentSuccess(updated);
-              } else if (data.transaction.status === 'FAILED') {
-                setIsWaitingAdminApproval(false);
-                setCurrentTransaction(null);
-                setPaymentError(
-                  data.transaction.statusMessage ||
-                    'Votre demande de paiement a été rejetée par l’administration. Veuillez contacter le support ou réessayer.'
-                );
-              }
-            }
-          }
-        } catch (err) {
-          console.warn('Erreur vérification statut admin:', err);
-        }
-      }, 2500);
-    }
-    return () => clearInterval(interval);
-  }, [currentTransaction, user, selectedVip, currentAmount, selectedOperator, onPaymentSuccess]);
+  // Full server synchronization (recover offline & online decisions seamlessly)
+  const performSync = useCallback(async () => {
+    try {
+      const identifier = userRef.current.id || userRef.current.phone;
+      const res = await fetch(`/api/users/sync/${encodeURIComponent(identifier)}`);
+      if (!res.ok) return;
+      const data = await res.json();
 
-  // Launch Payment Request
-  const handleLaunchPayment = async () => {
+      if (data.user && data.user.id === userRef.current.id) {
+        const serverUser: User = data.user;
+        const prevUser = userRef.current;
+
+        if (serverUser.paymentStatus === 'paid' && prevUser.paymentStatus !== 'paid') {
+          setIsWaitingAdminApproval(false);
+          setActiveTab('aviator');
+          setLiveAlert({
+            type: 'success',
+            message: 'Paiement VIP confirmé par l’administrateur ! Votre jeu Aviator & Code 15 est actif.',
+          });
+          onPaymentSuccess(serverUser);
+        } else if (
+          serverUser.vipTier !== prevUser.vipTier ||
+          serverUser.paymentStatus !== prevUser.paymentStatus ||
+          serverUser.bookmakerUserId !== prevUser.bookmakerUserId ||
+          (serverUser.balance ?? 0) !== (prevUser.balance ?? 0)
+        ) {
+          onPaymentSuccess(serverUser);
+        }
+      }
+
+      if (Array.isArray(data.transactions)) {
+        setClientTransactions(data.transactions);
+        if (userRef.current.paymentStatus !== 'paid') {
+          const pendingVipTx = data.transactions.find(
+            (t: TransactionRecord) =>
+              t.status === 'PENDING' && (!t.transactionType || t.transactionType === 'VIP_ACTIVATION')
+          );
+          if (pendingVipTx) {
+            setCurrentTransaction(pendingVipTx);
+            setIsWaitingAdminApproval(true);
+          }
+        }
+      }
+
+      if (Array.isArray(data.operations)) {
+        setClientOperations(data.operations);
+      }
+
+      if (data.aviatorState) {
+        setAviatorState(data.aviatorState);
+      }
+    } catch {
+      // Ignore transient network errors
+    }
+  }, [onPaymentSuccess]);
+
+  // Real-time SSE connection + periodic safety sync
+  useEffect(() => {
+    performSync();
+
+    const sseUrl = `/api/events/stream?userId=${encodeURIComponent(user.id)}&userPhone=${encodeURIComponent(
+      user.phone
+    )}&role=client`;
+    const eventSource = new EventSource(sseUrl);
+
+    eventSource.addEventListener('connected', (event) => {
+      try {
+        const payload = JSON.parse((event as MessageEvent).data);
+        if (payload.aviatorState) {
+          setAviatorState(payload.aviatorState);
+        }
+      } catch {
+        // ignore
+      }
+    });
+
+    eventSource.addEventListener('aviator:tick', (event) => {
+      try {
+        const tickState = JSON.parse((event as MessageEvent).data) as AviatorGameState;
+        setAviatorState(tickState);
+      } catch {
+        // ignore
+      }
+    });
+
+    eventSource.addEventListener('user:updated', (event) => {
+      try {
+        const payload = JSON.parse((event as MessageEvent).data);
+        if (payload.user && payload.user.id === userRef.current.id) {
+          const updated: User = payload.user;
+          if (updated.paymentStatus === 'paid' && userRef.current.paymentStatus !== 'paid') {
+            setIsWaitingAdminApproval(false);
+            setActiveTab('aviator');
+            setLiveAlert({
+              type: 'success',
+              message: 'Validation reçue ! Votre accès Aviator & Code 15 vient d’être débloqué instantanément.',
+            });
+          } else if (payload.transactionType === 'RECHARGE' && payload.decision === 'ACCEPT') {
+            setLiveAlert({
+              type: 'success',
+              message: `Rechargement validé : +${Number(payload.transaction?.amount || 0).toLocaleString('fr-FR')} FCFA ajoutés à votre solde !`,
+            });
+          } else if (payload.transactionType === 'WITHDRAWAL' && payload.decision === 'ACCEPT') {
+            setLiveAlert({
+              type: 'success',
+              message: `Retrait validé et payé : ${Number(payload.transaction?.amount || 0).toLocaleString('fr-FR')} FCFA envoyés sur votre numéro.`,
+            });
+          } else if (payload.decision === 'REJECT') {
+            setIsWaitingAdminApproval(false);
+            setCurrentTransaction(null);
+            setLiveAlert({
+              type: 'error',
+              message: payload.transaction?.statusMessage || 'Opération refusée par l’administrateur.',
+            });
+          }
+          onPaymentSuccess(updated);
+        }
+        performSync();
+      } catch {
+        performSync();
+      }
+    });
+
+    const fallbackInterval = setInterval(performSync, 5000);
+
+    return () => {
+      eventSource.close();
+      clearInterval(fallbackInterval);
+    };
+  }, [user.id, user.phone, performSync, onPaymentSuccess]);
+
+  // Real-time Firestore cross-device listener when Firebase Auth is active
+  useEffect(() => {
+    if (!firebaseUser || !firebaseUser.emailVerified) return;
+    const unsub = subscribeClientFirestore(firebaseUser.uid, {
+      onUserChange: (cloudUser) => {
+        const prev = userRef.current;
+        if (
+          cloudUser.paymentStatus !== prev.paymentStatus ||
+          (cloudUser.balance ?? 0) !== (prev.balance ?? 0) ||
+          cloudUser.vipTier !== prev.vipTier
+        ) {
+          const merged: User = {
+            ...prev,
+            ...cloudUser,
+            id: prev.id,
+            paymentStatus:
+              prev.paymentStatus === 'paid' || cloudUser.paymentStatus === 'paid'
+                ? 'paid'
+                : cloudUser.paymentStatus,
+            balance: Math.max(prev.balance ?? 0, cloudUser.balance ?? 0),
+          };
+          onPaymentSuccess(merged);
+        }
+      },
+      onTransactionsChange: (cloudTxs) => {
+        if (cloudTxs.length > 0) {
+          setClientTransactions((prev) => {
+            const map = new Map<string, TransactionRecord>();
+            for (const t of prev) map.set(t.id, t);
+            for (const ct of cloudTxs) map.set(ct.id, ct);
+            return Array.from(map.values()).sort((a, b) =>
+              (b.createdAt || '').localeCompare(a.createdAt || '')
+            );
+          });
+        }
+      },
+      onOperationsChange: (cloudOps) => {
+        if (cloudOps.length > 0) {
+          setClientOperations((prev) => {
+            const map = new Map<string, ClientOperation>();
+            for (const o of prev) map.set(o.id, o);
+            for (const co of cloudOps) map.set(co.id, co);
+            return Array.from(map.values()).sort((a, b) =>
+              (b.createdAt || '').localeCompare(a.createdAt || '')
+            );
+          });
+        }
+      },
+    });
+    return () => unsub();
+  }, [firebaseUser, onPaymentSuccess]);
+
+  // Launch VIP Activation Payment (Mandatory full name + phone, strict userId binding)
+  const handleLaunchVipPayment = async () => {
     setPaymentError('');
+    const cleanName = vipCustomerName.trim();
+    if (cleanName.length < 2) {
+      setPaymentError('Veuillez obligatoirement saisir votre nom complet avant de payer.');
+      return;
+    }
+
+    if (!selectedOperator) {
+      setPaymentError(
+        vipCountryInfo.gatewayNote || 'Aucun réseau Mobile Money actif disponible pour ce pays.'
+      );
+      return;
+    }
+
+    const cleanPhone = phone.replace(/[^0-9]/g, '');
+    if (cleanPhone.length < 6) {
+      setPaymentError('Veuillez saisir un numéro Mobile Money valide.');
+      return;
+    }
+
+    const cleanBetId = vipBookmakerId.replace(/\s+/g, '').trim();
+    if (!cleanBetId) {
+      setPaymentError(`Veuillez saisir votre ID de compte ${user.bookmaker} inscrit lors de l’inscription.`);
+      return;
+    }
+
+    if (user.bookmakerUserId && user.bookmakerUserId.replace(/\s+/g, '').trim() !== cleanBetId) {
+      setPaymentError(`Cet ID ne correspond pas à l’ID enregistré lors de votre inscription (${user.bookmakerUserId}).`);
+      return;
+    }
+
     setIsPaying(true);
 
     try {
@@ -162,620 +379,1217 @@ export const ClientAccount: React.FC<ClientAccountProps> = ({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          userId: user.id,
+          transactionType: 'VIP_ACTIVATION',
           amount: currentAmount.toFixed(2),
-          currency: countryInfo.currency,
-          country: countryInfo.code,
+          currency: vipCountryInfo.currency,
+          country: vipCountryInfo.code,
           network: selectedOperator.id,
           phone: phone,
-          customerName: user.fullName,
-          customerEmail: `${phone}@aviator-bot.com`,
-          description: `Paiement ${selectedVip} Bot Aviator (${currentAmount} FCFA)`,
+          customerName: cleanName,
+          customerEmail: `${user.id}@aviator-bot.com`,
+          description: `Paiement ${selectedVip} Bot Aviator (${currentAmount} ${vipCountryInfo.currency})`,
           vipTier: selectedVip,
           bookmaker: user.bookmaker,
+          bookmakerUserId: vipBookmakerId.trim(),
         }),
       });
 
       const data = await response.json();
       if (response.ok && data.success) {
+        if (data.user && data.user.id === user.id) {
+          onPaymentSuccess(data.user);
+        }
+        if (firebaseUser && data.transaction) {
+          upsertTransactionToFirestore(
+            { ...data.transaction, userId: firebaseUser.uid },
+            { firebaseUid: firebaseUser.uid }
+          ).catch(() => {});
+          upsertOperationToFirestore(
+            {
+              id: `op_${data.transaction.id}`,
+              userId: firebaseUser.uid,
+              firebaseUid: firebaseUser.uid,
+              userPhone: phone,
+              type: 'VIP_ACTIVATION',
+              amount: currentAmount,
+              status: 'PENDING',
+              title: 'Activation Licence VIP',
+              description: data.transaction.description || 'Paiement VIP en attente',
+              reference: data.transaction.id,
+              createdAt: data.transaction.createdAt,
+              updatedAt: data.transaction.updatedAt,
+            },
+            { firebaseUid: firebaseUser.uid }
+          ).catch(() => {});
+        }
         setCurrentTransaction(data.transaction);
         setIsWaitingAdminApproval(true);
         setCountdown(60);
         setHasUserConfirmedOnPhone(false);
+        performSync();
       } else {
-        setPaymentError(data.message || 'Impossible d’initier le paiement Mobile Money.');
+        setPaymentError(data.message || 'Veuillez vérifier vos informations et réessayer.');
       }
-    } catch (err: any) {
-      setPaymentError(err.message || 'Erreur réseau lors de la demande de paiement.');
+    } catch {
+      setPaymentError('Connexion interrompue. Veuillez réessayer.');
     } finally {
       setIsPaying(false);
     }
   };
 
-  const handleRestartCountdown = () => {
-    setCountdown(60);
-    setHasUserConfirmedOnPhone(false);
+  // Launch Balance Recharge (Mandatory full name + phone + Bookmaker ID + Admin confirmation)
+  const handleLaunchRecharge = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setRechargeFeedback(null);
+
+    const cleanName = rechargeCustomerName.trim();
+    if (cleanName.length < 2) {
+      setRechargeFeedback({
+        type: 'error',
+        text: 'Veuillez obligatoirement saisir votre nom complet avant de lancer le paiement.',
+      });
+      return;
+    }
+
+    if (!rechargeOperator) {
+      setRechargeFeedback({
+        type: 'error',
+        text: rechargeCountryInfo.gatewayNote || 'Aucun réseau Mobile Money actif disponible pour ce pays.',
+      });
+      return;
+    }
+
+    const cleanRechargePhone = rechargePhone.replace(/[^0-9]/g, '');
+    if (cleanRechargePhone.length < 6) {
+      setRechargeFeedback({ type: 'error', text: 'Veuillez saisir un numéro Mobile Money valide.' });
+      return;
+    }
+
+    const amountNum = Math.floor(Number(rechargeAmount));
+    if (isNaN(amountNum) || amountNum < 500) {
+      setRechargeFeedback({ type: 'error', text: 'Montant minimum de rechargement : 500 XOF.' });
+      return;
+    }
+
+    const cleanBetId = depositBookmakerId.replace(/\s+/g, '').trim();
+    if (!cleanBetId) {
+      setRechargeFeedback({
+        type: 'error',
+        text: `Veuillez entrer l’ID de votre compte ${user.bookmaker} inscrit lors de l’inscription avant le dépôt.`,
+      });
+      return;
+    }
+
+    if (user.bookmakerUserId && user.bookmakerUserId.replace(/\s+/g, '').trim() !== cleanBetId) {
+      setRechargeFeedback({
+        type: 'error',
+        text: `L’ID saisi ne correspond pas à votre ID d’inscription (${user.bookmakerUserId}).`,
+      });
+      return;
+    }
+
+    setIsSubmittingRecharge(true);
+    try {
+      const res = await fetch('/api/payments/initiate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId: user.id,
+          transactionType: 'RECHARGE',
+          amount: amountNum.toFixed(2),
+          currency: rechargeCountryInfo.currency,
+          country: rechargeCountryInfo.code,
+          network: rechargeOperator.id,
+          phone: rechargePhone,
+          customerName: cleanName,
+          customerEmail: `${user.id}@aviator-bot.com`,
+          description: `Rechargement Solde Mobile Money (${amountNum} ${rechargeCountryInfo.currency}) · ID ${cleanBetId}`,
+          vipTier: user.vipTier,
+          bookmaker: user.bookmaker,
+          bookmakerUserId: depositBookmakerId.trim(),
+        }),
+      });
+
+      const data = await res.json();
+      if (res.ok && data.success) {
+        if (data.user && data.user.id === user.id) {
+          onPaymentSuccess(data.user);
+        }
+        if (firebaseUser && data.transaction) {
+          upsertTransactionToFirestore(
+            { ...data.transaction, userId: firebaseUser.uid },
+            { firebaseUid: firebaseUser.uid }
+          ).catch(() => {});
+          upsertOperationToFirestore(
+            {
+              id: `op_${data.transaction.id}`,
+              userId: firebaseUser.uid,
+              firebaseUid: firebaseUser.uid,
+              userPhone: rechargePhone,
+              type: 'RECHARGE',
+              amount: amountNum,
+              status: 'PENDING',
+              title: 'Rechargement Mobile Money',
+              description: data.transaction.description || 'Rechargement en attente',
+              reference: data.transaction.id,
+              createdAt: data.transaction.createdAt,
+              updatedAt: data.transaction.updatedAt,
+            },
+            { firebaseUid: firebaseUser.uid }
+          ).catch(() => {});
+        }
+        setRechargeFeedback({
+          type: 'success',
+          text: `Demande de ${amountNum.toLocaleString('fr-FR')} ${rechargeCountryInfo.currency} envoyée (${rechargeOperator.name}). Votre solde sera crédité dès confirmation par l’administrateur.`,
+        });
+        performSync();
+      } else {
+        setRechargeFeedback({ type: 'error', text: data.message || 'Veuillez vérifier les informations saisies.' });
+      }
+    } catch {
+      setRechargeFeedback({ type: 'error', text: 'Connexion momentanément indisponible. Réessayez.' });
+    } finally {
+      setIsSubmittingRecharge(false);
+    }
   };
 
-  const handleCancelPending = () => {
-    setIsWaitingAdminApproval(false);
-    setCurrentTransaction(null);
-    setCountdown(60);
-    setHasUserConfirmedOnPhone(false);
+  // Launch Withdrawal Request (Minimum 5 000 FCFA, Admin validation required)
+  const handleRequestWithdrawal = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setWithdrawFeedback(null);
+
+    if (!withdrawOperator) {
+      setWithdrawFeedback({
+        type: 'error',
+        text: withdrawCountryInfo.gatewayNote || 'Aucun réseau actif sélectionné pour la réception.',
+      });
+      return;
+    }
+
+    const amountNum = Math.floor(Number(withdrawAmount));
+    if (isNaN(amountNum) || amountNum < 5000) {
+      setWithdrawFeedback({
+        type: 'error',
+        text: 'Le montant minimum pour effectuer un retrait est de 5 000 XOF.',
+      });
+      return;
+    }
+    if (amountNum > currentBalance) {
+      setWithdrawFeedback({
+        type: 'error',
+        text: `Solde insuffisant (${currentBalance.toLocaleString('fr-FR')} XOF disponibles).`,
+      });
+      return;
+    }
+
+    setIsSubmittingWithdraw(true);
+    try {
+      const res = await fetch('/api/wallet/withdraw', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId: user.id,
+          phone: `${withdrawCountryInfo.phonePrefix}${withdrawPhone.replace(/[^0-9]/g, '')}`,
+          amount: amountNum,
+          country: withdrawCountryInfo.code,
+          network: withdrawOperator.id,
+        }),
+      });
+
+      const data = await res.json();
+      if (res.ok && data.success) {
+        if (data.user) onPaymentSuccess(data.user);
+        if (firebaseUser && data.transaction) {
+          upsertTransactionToFirestore(
+            { ...data.transaction, userId: firebaseUser.uid },
+            { firebaseUid: firebaseUser.uid }
+          ).catch(() => {});
+          upsertOperationToFirestore(
+            {
+              id: `op_${data.transaction.id}`,
+              userId: firebaseUser.uid,
+              firebaseUid: firebaseUser.uid,
+              userPhone: withdrawPhone,
+              type: 'WITHDRAWAL',
+              amount: amountNum,
+              status: 'PENDING',
+              title: 'Retrait Mobile Money',
+              description: data.transaction.description || 'Retrait en attente',
+              reference: data.transaction.id,
+              createdAt: data.transaction.createdAt,
+              updatedAt: data.transaction.updatedAt,
+            },
+            { firebaseUid: firebaseUser.uid }
+          ).catch(() => {});
+        }
+        setWithdrawFeedback({
+          type: 'success',
+          text: `Retrait de ${amountNum.toLocaleString('fr-FR')} XOF transmis à l’administrateur pour validation.`,
+        });
+        performSync();
+      } else {
+        setWithdrawFeedback({ type: 'error', text: data.message || 'Demande de retrait refusée.' });
+      }
+    } catch {
+      setWithdrawFeedback({ type: 'error', text: 'Veuillez réessayer.' });
+    } finally {
+      setIsSubmittingWithdraw(false);
+    }
   };
 
-  const handleOpenBot = () => {
-    window.open(botRedirectUrl, '_blank', 'noopener,noreferrer');
-  };
-
-  return (
-    <div className="py-8 max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 space-y-8">
-      {/* 1. YOUTUBE VIDEO AT THE VERY TOP (Pure embed without overlays) */}
-      <ClientVideoSection />
-
-      {/* 2. Welcome & Account Status Bar (Clean Day Mode) */}
-      <div className="bg-white border border-slate-200 rounded-2xl p-6 sm:p-7 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div className="space-y-1">
-          <div className="flex items-center gap-2 text-xs font-mono text-slate-500">
-            <span>Compte Membre Aviator</span>
-            <span aria-hidden="true">·</span>
-            <span>📍 {countryInfo.flag} {countryInfo.name}</span>
-            <span aria-hidden="true">·</span>
-            <span className="text-blue-700 font-bold">{user.bookmaker}</span>
+  // =========================================================================
+  // RENDER: PAID VIP CLIENT -> LIVE AVIATOR & BOT + WALLET MOBILE INTERFACE
+  // =========================================================================
+  if (isPaid) {
+    return (
+      <div className="px-3 pt-3 pb-24 space-y-3">
+        {/* Compact Account & Balance Header */}
+        <div className="bg-white rounded-2xl border border-slate-200 p-3.5 shadow-xs flex items-center justify-between gap-2">
+          <div className="min-w-0">
+            <div className="flex items-center gap-1.5 text-[10px] font-mono text-emerald-700 font-bold uppercase">
+              <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+              <span className="truncate">
+                {user.vipTier} ACTIF · {user.bookmaker}
+              </span>
+            </div>
+            <div className="text-sm font-black text-slate-900 truncate">{user.fullName}</div>
+            <div className="text-[11px] font-mono text-slate-500">{user.phone}</div>
           </div>
-          <h1 className="text-2xl font-black text-slate-900 tracking-tight">
-            Bienvenue, {user.fullName}
-          </h1>
-          <p className="text-xs text-slate-600">
-            Numéro de réservation : <span className="font-mono text-slate-900 font-bold">{user.phone}</span>
-          </p>
+
+          <div className="flex items-center gap-2 shrink-0">
+            <div className="px-2.5 py-1.5 rounded-xl bg-slate-900 text-white text-right">
+              <span className="text-[9px] font-mono text-slate-400 block">SOLDE</span>
+              <span className="font-mono font-black text-xs tabular-nums">
+                {currentBalance.toLocaleString('fr-FR')} F
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={onLogout}
+              className="w-10 h-10 rounded-xl bg-slate-100 hover:bg-rose-50 text-slate-600 hover:text-rose-600 flex items-center justify-center cursor-pointer"
+              title="Déconnexion"
+            >
+              <LogOut className="w-4 h-4" />
+            </button>
+          </div>
         </div>
 
-        <div className="flex items-center gap-3 shrink-0">
-          {isPaid ? (
-            <div className="px-4 py-2 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-mono font-bold flex items-center gap-2 shadow-2xs">
-              <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-              <span>ACCÈS VIP DÉVERROUILLÉ ({user.vipTier})</span>
+        {/* Optional Cloud Sync Link when logged in only with Phone+Password */}
+        {!firebaseUser && (
+          <div className="px-3 py-2 rounded-xl bg-blue-50 border border-blue-200 flex items-center justify-between gap-2 text-[11px]">
+            <span className="text-blue-900 font-medium truncate">
+              Sauvegardez votre compte entre appareils
+            </span>
+            <button
+              type="button"
+              onClick={handleLinkCloudAccount}
+              disabled={isLinkingCloud}
+              className="px-2.5 py-1 rounded-lg bg-blue-600 text-white font-bold text-[10px] shrink-0 cursor-pointer disabled:opacity-60"
+            >
+              {isLinkingCloud ? 'Sync...' : 'Lier Google Cloud'}
+            </button>
+          </div>
+        )}
+
+        {/* Live Push Toast */}
+        {liveAlert && (
+          <div
+            className={`p-3 rounded-xl border text-xs font-semibold flex items-center justify-between gap-2 shadow-xs ${
+              liveAlert.type === 'success'
+                ? 'bg-emerald-50 border-emerald-300 text-emerald-900'
+                : liveAlert.type === 'error'
+                ? 'bg-rose-50 border-rose-300 text-rose-900'
+                : 'bg-blue-50 border-blue-300 text-blue-900'
+            }`}
+          >
+            <span>{liveAlert.message}</span>
+            <button
+              type="button"
+              onClick={() => setLiveAlert(null)}
+              className="p-1 cursor-pointer shrink-0"
+            >
+              <XCircle className="w-4 h-4 opacity-60" />
+            </button>
+          </div>
+        )}
+
+        {/* TAB 1: AVIATOR GAME & BOT SIGNAL */}
+        {activeTab === 'aviator' && (
+          <AviatorGameDashboard
+            user={user}
+            aviatorState={aviatorState}
+            onUserUpdated={onPaymentSuccess}
+            onGoToRecharge={() => setActiveTab('recharge')}
+          />
+        )}
+
+        {/* TAB 2: RECHARGER MON SOLDE (VALIDATION ADMIN OBLIGATOIRE) */}
+        {activeTab === 'recharge' && (
+          <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-xs space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div>
+                <span className="text-[10px] font-mono font-bold uppercase text-emerald-700">
+                  Dépôt Mobile Money Réel
+                </span>
+                <h2 className="text-base font-black text-slate-900">Recharger mon Solde</h2>
+              </div>
+              <div className="text-right">
+                <span className="text-[10px] text-slate-400 block">Solde actuel</span>
+                <span className="font-mono font-black text-sm text-slate-900 tabular-nums">
+                  {currentBalance.toLocaleString('fr-FR')} FCFA
+                </span>
+              </div>
             </div>
-          ) : isWaitingAdminApproval ? (
-            <div className="px-4 py-2 rounded-xl bg-amber-50 border border-amber-300 text-amber-900 text-xs font-mono font-bold flex items-center gap-2 shadow-2xs">
-              <Hourglass className="w-4 h-4 text-amber-600 animate-spin" />
-              <span>EN ATTENTE VALIDATION ADMIN</span>
+
+            <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-900 flex items-start gap-2">
+              <ShieldCheck className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
+              <span>
+                Aucun dépôt fictif : votre rechargement est crédité automatiquement dès que l’administrateur confirme la réception sur Mobile Money.
+              </span>
             </div>
-          ) : (
-            <div className="px-4 py-2 rounded-xl bg-slate-100 border border-slate-200 text-slate-800 text-xs font-mono font-bold flex items-center gap-2 shadow-2xs">
-              <Lock className="w-4 h-4 text-amber-600" />
-              <span>PLACE RÉSERVÉE (NON PAYÉ)</span>
+
+            <form onSubmit={handleLaunchRecharge} className="space-y-4">
+              <div>
+                <label className="block text-[11px] font-bold text-slate-700 uppercase mb-1.5">
+                  Montant à recharger (FCFA)
+                </label>
+                <input
+                  type="number"
+                  min={500}
+                  step={100}
+                  required
+                  value={rechargeAmount}
+                  onChange={(e) => setRechargeAmount(e.target.value)}
+                  className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl font-mono font-bold text-slate-900 focus:outline-none focus:border-emerald-600"
+                />
+                <div className="grid grid-cols-4 gap-1.5 mt-2">
+                  {[1000, 2000, 5000, 10000].map((val) => (
+                    <button
+                      key={val}
+                      type="button"
+                      onClick={() => setRechargeAmount(String(val))}
+                      className={`py-2 rounded-xl text-xs font-mono font-bold border cursor-pointer ${
+                        Number(rechargeAmount) === val
+                          ? 'bg-emerald-600 text-white border-emerald-600'
+                          : 'bg-slate-50 text-slate-700 border-slate-200'
+                      }`}
+                    >
+                      {val.toLocaleString('fr-FR')}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold text-slate-700 uppercase mb-1.5">
+                  Nom complet du payeur (Obligatoire)
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={rechargeCustomerName}
+                  onChange={(e) => setRechargeCustomerName(e.target.value)}
+                  placeholder="Ex: Kouamé Jean-Marc"
+                  className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl font-semibold text-slate-900 focus:outline-none focus:border-emerald-600"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold text-slate-700 uppercase mb-1.5">
+                  Pays UEMOA · Devise XOF ({rechargeCountryInfo.flag} {rechargeCountryInfo.currency})
+                </label>
+                <select
+                  value={rechargeCountryCode}
+                  onChange={(e) => {
+                    const nextCode = e.target.value as CountryCode;
+                    setRechargeCountryCode(nextCode);
+                    const nextCountry = SUPPORTED_COUNTRIES[nextCode];
+                    setRechargeOperator(nextCountry.operators[0] || null);
+                  }}
+                  className="w-full px-3 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-xs font-bold text-slate-900 focus:outline-none focus:border-emerald-600"
+                >
+                  {COUNTRIES_LIST.map((c) => (
+                    <option key={c.code} value={c.code}>
+                      {c.flag} {c.name} ({c.currency}) — {c.operators.length > 0 ? c.operators.map((o) => o.name).join(', ') : 'Indisponible'}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold text-slate-700 uppercase mb-1.5">
+                  Réseaux SASPay disponibles ({rechargeCountryInfo.flag} {rechargeCountryInfo.name} · {rechargeCountryInfo.currency})
+                </label>
+                {rechargeCountryInfo.operators.length > 0 ? (
+                  <div className="grid grid-cols-2 gap-2">
+                    {rechargeCountryInfo.operators.map((op) => (
+                      <button
+                        key={op.id}
+                        type="button"
+                        onClick={() => setRechargeOperator(op)}
+                        className={`p-2.5 rounded-xl border-2 text-left text-xs font-bold cursor-pointer flex items-center justify-between ${
+                          rechargeOperator?.id === op.id
+                            ? 'border-emerald-600 bg-emerald-50 text-emerald-900'
+                            : 'border-slate-200 bg-slate-50 text-slate-700'
+                        }`}
+                      >
+                        <span className="truncate">{op.name}</span>
+                        {rechargeOperator?.id === op.id && <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0" />}
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-900">
+                    {rechargeCountryInfo.gatewayNote || 'Aucun réseau Mobile Money actif sur SASPay pour ce pays.'}
+                  </div>
+                )}
+                {rechargeCountryInfo.gatewayNote && rechargeCountryInfo.operators.length > 0 && (
+                  <span className="text-[10px] text-slate-500 mt-1 block">{rechargeCountryInfo.gatewayNote}</span>
+                )}
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold text-slate-700 uppercase mb-1.5">
+                  ID de votre compte {user.bookmaker} (inscrit à l'inscription)
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={depositBookmakerId}
+                  onChange={(e) => setDepositBookmakerId(e.target.value)}
+                  placeholder="Ex: 849201453"
+                  className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl font-mono font-bold text-slate-900 focus:outline-none focus:border-emerald-600"
+                />
+                {user.bookmakerUserId && (
+                  <span className="text-[10px] text-slate-500 mt-1 block">
+                    ID enregistré : <strong className="font-mono">{user.bookmakerUserId}</strong>
+                  </span>
+                )}
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold text-slate-700 uppercase mb-1.5">
+                  Numéro Mobile Money ({rechargeCountryInfo.phonePrefix})
+                </label>
+                <div className="flex">
+                  <span className="inline-flex items-center px-3 rounded-l-xl border border-r-0 border-slate-300 bg-slate-100 text-xs font-mono font-bold text-slate-700">
+                    {rechargeCountryInfo.flag} {rechargeCountryInfo.phonePrefix}
+                  </span>
+                  <input
+                    type="tel"
+                    required
+                    value={rechargePhone}
+                    onChange={(e) => setRechargePhone(e.target.value)}
+                    className="w-full px-3 py-2.5 bg-slate-50 border border-slate-300 rounded-r-xl font-mono text-slate-900 focus:outline-none focus:border-emerald-600"
+                    placeholder={rechargeCountryInfo.phonePlaceholder}
+                  />
+                </div>
+              </div>
+
+              {rechargeFeedback && (
+                <div
+                  className={`p-3 rounded-xl text-xs font-medium flex items-start gap-2 ${
+                    rechargeFeedback.type === 'success'
+                      ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+                      : 'bg-rose-50 text-rose-700 border border-rose-200'
+                  }`}
+                >
+                  {rechargeFeedback.type === 'success' ? (
+                    <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5" />
+                  ) : (
+                    <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                  )}
+                  <span>{rechargeFeedback.text}</span>
+                </div>
+              )}
+
+              <button
+                type="submit"
+                disabled={isSubmittingRecharge || !rechargeOperator}
+                className="w-full min-h-[48px] py-3 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60"
+              >
+                <PlusCircle className="w-4 h-4" />
+                <span>
+                  {isSubmittingRecharge
+                    ? 'Envoi en cours...'
+                    : `Demander Rechargement ${Number(rechargeAmount || 0).toLocaleString('fr-FR')} ${rechargeCountryInfo.currency}`}
+                </span>
+              </button>
+            </form>
+          </div>
+        )}
+
+        {/* TAB 3: RETIRER MES GAINS (MINIMUM 5 000 FCFA, VALIDATION ADMIN) */}
+        {activeTab === 'withdraw' && (
+          <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-xs space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div>
+                <span className="text-[10px] font-mono font-bold uppercase text-blue-700">
+                  Retrait Mobile Money
+                </span>
+                <h2 className="text-base font-black text-slate-900">Retirer mes Gains</h2>
+              </div>
+              <div className="text-right">
+                <span className="text-[10px] text-slate-400 block">Disponible</span>
+                <span className="font-mono font-black text-sm text-emerald-700 tabular-nums">
+                  {currentBalance.toLocaleString('fr-FR')} FCFA
+                </span>
+              </div>
             </div>
-          )}
+
+            <div className="p-3 rounded-xl bg-blue-50 border border-blue-200 text-xs text-blue-900 flex items-start gap-2">
+              <AlertCircle className="w-4 h-4 text-blue-700 shrink-0 mt-0.5" />
+              <span>
+                <strong>Minimum de retrait : 5 000 FCFA.</strong> Chaque retrait est vérifié et validé depuis le compte administrateur avant l'envoi sur votre téléphone.
+              </span>
+            </div>
+
+            <form onSubmit={handleRequestWithdrawal} className="space-y-4">
+              <div>
+                <label className="block text-[11px] font-bold text-slate-700 uppercase mb-1.5">
+                  Montant à retirer (min. 5 000 FCFA)
+                </label>
+                <input
+                  type="number"
+                  min={5000}
+                  step={500}
+                  required
+                  value={withdrawAmount}
+                  onChange={(e) => setWithdrawAmount(e.target.value)}
+                  className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl font-mono font-bold text-slate-900 focus:outline-none focus:border-blue-600"
+                />
+                <div className="grid grid-cols-3 gap-1.5 mt-2">
+                  {[5000, 10000, 25000].map((val) => (
+                    <button
+                      key={val}
+                      type="button"
+                      onClick={() => setWithdrawAmount(String(val))}
+                      className={`py-2 rounded-xl text-xs font-mono font-bold border cursor-pointer ${
+                        Number(withdrawAmount) === val
+                          ? 'bg-blue-600 text-white border-blue-600'
+                          : 'bg-slate-50 text-slate-700 border-slate-200'
+                      }`}
+                    >
+                      {val.toLocaleString('fr-FR')} F
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold text-slate-700 uppercase mb-1.5">
+                  Pays de réception ({withdrawCountryInfo.flag} {withdrawCountryInfo.currency})
+                </label>
+                <select
+                  value={withdrawCountryCode}
+                  onChange={(e) => {
+                    const nextCode = e.target.value as CountryCode;
+                    setWithdrawCountryCode(nextCode);
+                    const nextCountry = SUPPORTED_COUNTRIES[nextCode];
+                    setWithdrawOperator(nextCountry.operators[0] || null);
+                  }}
+                  className="w-full px-3 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-xs font-bold text-slate-900 focus:outline-none focus:border-blue-600"
+                >
+                  {COUNTRIES_LIST.filter((c) => c.operators.length > 0).map((c) => (
+                    <option key={c.code} value={c.code}>
+                      {c.flag} {c.name} ({c.currency})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold text-slate-700 uppercase mb-1.5">
+                  Opérateur de réception
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  {withdrawCountryInfo.operators.map((op) => (
+                    <button
+                      key={op.id}
+                      type="button"
+                      onClick={() => setWithdrawOperator(op)}
+                      className={`p-2.5 rounded-xl border-2 text-left text-xs font-bold cursor-pointer flex items-center justify-between ${
+                        withdrawOperator?.id === op.id
+                          ? 'border-blue-600 bg-blue-50 text-blue-900'
+                          : 'border-slate-200 bg-slate-50 text-slate-700'
+                      }`}
+                    >
+                      <span className="truncate">{op.name}</span>
+                      {withdrawOperator?.id === op.id && <Check className="w-3.5 h-3.5 text-blue-600 shrink-0" />}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold text-slate-700 uppercase mb-1.5">
+                  Numéro de réception Mobile Money
+                </label>
+                <div className="flex">
+                  <span className="inline-flex items-center px-3 rounded-l-xl border border-r-0 border-slate-300 bg-slate-100 text-xs font-mono font-bold text-slate-700">
+                    {withdrawCountryInfo.flag} {withdrawCountryInfo.phonePrefix}
+                  </span>
+                  <input
+                    type="tel"
+                    required
+                    value={withdrawPhone}
+                    onChange={(e) => setWithdrawPhone(e.target.value)}
+                    className="w-full px-3 py-2.5 bg-slate-50 border border-slate-300 rounded-r-xl font-mono text-slate-900 focus:outline-none focus:border-blue-600"
+                    placeholder={withdrawCountryInfo.phonePlaceholder}
+                  />
+                </div>
+              </div>
+
+              {withdrawFeedback && (
+                <div
+                  className={`p-3 rounded-xl text-xs font-medium flex items-start gap-2 ${
+                    withdrawFeedback.type === 'success'
+                      ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+                      : 'bg-rose-50 text-rose-700 border border-rose-200'
+                  }`}
+                >
+                  {withdrawFeedback.type === 'success' ? (
+                    <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5" />
+                  ) : (
+                    <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                  )}
+                  <span>{withdrawFeedback.text}</span>
+                </div>
+              )}
+
+              <button
+                type="submit"
+                disabled={isSubmittingWithdraw || !withdrawOperator}
+                className="w-full min-h-[48px] py-3 px-4 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60"
+              >
+                <ArrowDownToLine className="w-4 h-4" />
+                <span>
+                  {isSubmittingWithdraw
+                    ? 'Transmission en cours...'
+                    : `Demander Retrait ${Number(withdrawAmount || 0).toLocaleString('fr-FR')} ${withdrawCountryInfo.currency}`}
+                </span>
+              </button>
+            </form>
+          </div>
+        )}
+
+        {/* TAB 4: HISTORIQUE COMPLET & PERMANENT DES OPÉRATIONS */}
+        {activeTab === 'operations' && (
+          <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-xs space-y-3">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-2">
+                <Receipt className="w-4 h-4 text-emerald-600" />
+                <div>
+                  <h2 className="text-sm font-black text-slate-900">Mes Opérations</h2>
+                  <p className="text-[11px] text-slate-500">Synchronisation automatique permanente</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={performSync}
+                className="p-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 cursor-pointer"
+                title="Actualiser"
+              >
+                <RefreshCw className="w-4 h-4" />
+              </button>
+            </div>
+
+            {clientOperations.length === 0 ? (
+              <div className="p-8 text-center text-xs text-slate-500 space-y-1.5">
+                <Clock className="w-6 h-6 mx-auto text-slate-400" />
+                <p>Aucune opération enregistrée pour le moment.</p>
+              </div>
+            ) : (
+              <div className="space-y-2.5">
+                {clientOperations.map((op) => {
+                  const isSuccess = op.status === 'SUCCESS';
+                  const isPending = op.status === 'PENDING';
+                  const sign = op.type === 'WIN' || op.type === 'RECHARGE' ? '+' : op.type === 'WITHDRAWAL' || op.type === 'BET' ? '-' : '';
+                  return (
+                    <div
+                      key={op.id}
+                      className={`p-3 rounded-xl border text-xs space-y-1.5 ${
+                        isSuccess
+                          ? 'bg-emerald-50/40 border-emerald-200'
+                          : isPending
+                          ? 'bg-amber-50/50 border-amber-300'
+                          : 'bg-rose-50/40 border-rose-200'
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <div className="font-bold text-slate-900 truncate">{op.title}</div>
+                          <div className="text-[11px] text-slate-600 leading-snug">{op.description}</div>
+                        </div>
+                        <div className="text-right shrink-0">
+                          <div
+                            className={`font-mono font-black text-sm tabular-nums ${
+                              isSuccess
+                                ? 'text-emerald-700'
+                                : isPending
+                                ? 'text-amber-700'
+                                : 'text-rose-700'
+                            }`}
+                          >
+                            {sign}
+                            {op.amount.toLocaleString('fr-FR')} F
+                          </div>
+                          <span
+                            className={`inline-block text-[10px] font-mono font-bold px-1.5 py-0.5 rounded mt-0.5 ${
+                              isSuccess
+                                ? 'bg-emerald-100 text-emerald-800'
+                                : isPending
+                                ? 'bg-amber-100 text-amber-800'
+                                : 'bg-rose-100 text-rose-800'
+                            }`}
+                          >
+                            {isSuccess ? 'VALIDÉ' : isPending ? 'EN ATTENTE' : 'REJETÉ'}
+                          </span>
+                        </div>
+                      </div>
+                      <div className="flex items-center justify-between text-[10px] font-mono text-slate-400">
+                        <span>{new Date(op.updatedAt || op.createdAt).toLocaleString('fr-FR')}</span>
+                        {op.reference && <span className="truncate max-w-[140px]">Réf: {op.reference}</span>}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* MOBILE FIXED BOTTOM NAVIGATION BAR (TOUCH TARGETS >= 48px) */}
+        <nav className="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-[430px] z-30 bg-white/95 backdrop-blur-md border-t border-slate-200 px-2 py-1.5 grid grid-cols-4 gap-1 shadow-lg">
+          <button
+            type="button"
+            onClick={() => setActiveTab('aviator')}
+            className={`min-h-[48px] rounded-xl flex flex-col items-center justify-center gap-0.5 text-[10px] font-bold cursor-pointer transition-colors ${
+              activeTab === 'aviator' ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-100'
+            }`}
+          >
+            <Plane className="w-4 h-4" />
+            <span>Aviator</span>
+          </button>
 
           <button
+            type="button"
+            onClick={() => setActiveTab('recharge')}
+            className={`min-h-[48px] rounded-xl flex flex-col items-center justify-center gap-0.5 text-[10px] font-bold cursor-pointer transition-colors ${
+              activeTab === 'recharge' ? 'bg-emerald-600 text-white' : 'text-slate-600 hover:bg-slate-100'
+            }`}
+          >
+            <PlusCircle className="w-4 h-4" />
+            <span>Recharger</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab('withdraw')}
+            className={`min-h-[48px] rounded-xl flex flex-col items-center justify-center gap-0.5 text-[10px] font-bold cursor-pointer transition-colors ${
+              activeTab === 'withdraw' ? 'bg-blue-600 text-white' : 'text-slate-600 hover:bg-slate-100'
+            }`}
+          >
+            <ArrowDownToLine className="w-4 h-4" />
+            <span>Retirer</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab('operations')}
+            className={`min-h-[48px] rounded-xl flex flex-col items-center justify-center gap-0.5 text-[10px] font-bold cursor-pointer transition-colors ${
+              activeTab === 'operations' ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-100'
+            }`}
+          >
+            <Receipt className="w-4 h-4" />
+            <span>Opérations</span>
+          </button>
+        </nav>
+      </div>
+    );
+  }
+
+  // =========================================================================
+  // RENDER: UNPAID / PENDING VIP ACTIVATION SCREEN (MOBILE-ONLY)
+  // =========================================================================
+  return (
+    <div className="px-3 py-4 space-y-4">
+      <ClientVideoSection />
+
+      {/* Welcome & Status */}
+      <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-xs space-y-3">
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0">
+            <div className="text-[10px] font-mono text-slate-500 truncate">
+              {vipCountryInfo.flag} {vipCountryInfo.name} ({vipCountryInfo.currency}) · <strong className="text-blue-700">{user.bookmaker}</strong>
+            </div>
+            <h1 className="text-lg font-black text-slate-900 truncate">Bienvenue, {user.fullName}</h1>
+            <p className="text-[11px] font-mono text-slate-600">{user.phone}</p>
+          </div>
+
+          <button
+            type="button"
             onClick={onLogout}
-            className="p-2 text-slate-500 hover:text-slate-800 bg-slate-100 hover:bg-slate-200 rounded-xl transition-colors cursor-pointer"
+            className="w-10 h-10 rounded-xl bg-slate-100 hover:bg-rose-50 text-slate-600 hover:text-rose-600 flex items-center justify-center shrink-0 cursor-pointer"
             title="Se déconnecter"
           >
             <LogOut className="w-4 h-4" />
           </button>
         </div>
+
+        <div className="px-3 py-2 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-[11px] font-mono font-bold flex items-center gap-2">
+          {isWaitingAdminApproval ? (
+            <>
+              <Hourglass className="w-4 h-4 text-amber-700 shrink-0" />
+              <span>EN ATTENTE DE VALIDATION ADMIN</span>
+            </>
+          ) : (
+            <>
+              <Lock className="w-4 h-4 text-amber-700 shrink-0" />
+              <span>PLACE RÉSERVÉE · ACTIVATION VIP REQUISE</span>
+            </>
+          )}
+        </div>
       </div>
 
-      {/* 3. IF PAID: PROMINENT ACCESS BUTTON & RADAR */}
-      {isPaid ? (
-        <div className="space-y-6 animate-in fade-in">
-          {/* THE PROMINENT REDIRECTION BUTTON REQUIRED BY USER */}
-          <div className="bg-gradient-to-r from-emerald-50 via-teal-50 to-blue-50 border-2 border-emerald-400 rounded-2xl p-8 sm:p-10 text-center space-y-6 shadow-lg">
-            <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-emerald-100 text-emerald-800 text-xs font-mono font-bold border border-emerald-300">
-              <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-              <span>PAIEMENT VALIDÉ PAR L'ADMINISTRATION · LICENCE ACTIVE</span>
+      {liveAlert && (
+        <div
+          className={`p-3 rounded-xl border text-xs font-semibold flex items-center justify-between gap-2 ${
+            liveAlert.type === 'success'
+              ? 'bg-emerald-50 border-emerald-300 text-emerald-900'
+              : 'bg-rose-50 border-rose-300 text-rose-900'
+          }`}
+        >
+          <span>{liveAlert.message}</span>
+          <button type="button" onClick={() => setLiveAlert(null)} className="cursor-pointer">
+            <XCircle className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
+      {/* 60-Second Confirmation Screen while Waiting for Admin */}
+      {isWaitingAdminApproval && currentTransaction ? (
+        <div className="bg-white border-2 border-amber-300 rounded-2xl p-4 shadow-md space-y-4">
+          <div className="flex items-center justify-between text-[11px] font-mono border-b border-slate-100 pb-2.5">
+            <span className="font-bold text-amber-900 flex items-center gap-1.5">
+              <Clock className="w-4 h-4 text-amber-600" />
+              CONFIRMATION EN COURS
+            </span>
+            <span className="text-slate-500">Réf: {currentTransaction.id}</span>
+          </div>
+
+          <div className="text-center space-y-3">
+            <div className="w-24 h-24 mx-auto rounded-full border-4 border-amber-200 flex items-center justify-center bg-amber-50/40">
+              <span
+                className={`text-2xl font-mono font-black tabular-nums ${
+                  countdown > 15 ? 'text-amber-700' : countdown > 0 ? 'text-rose-600' : 'text-slate-400'
+                }`}
+              >
+                00:{countdown < 10 ? `0${countdown}` : countdown}
+              </span>
             </div>
 
-            <div className="space-y-2">
-              <h2 className="text-2xl sm:text-4xl font-black text-slate-900 tracking-tight">
-                Votre Bot Aviator est Débloqué
-              </h2>
-              <p className="text-sm text-slate-600 max-w-xl mx-auto leading-relaxed">
-                Cliquez sur le bouton ci-dessous pour être redirigé vers l'application officielle du Bot et recevoir vos prédictions de cotes pour <strong>{user.bookmaker}</strong>.
+            <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
+              <div
+                className="h-full bg-amber-500 transition-all duration-1000"
+                style={{ width: `${(countdown / 60) * 100}%` }}
+              />
+            </div>
+
+            <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-left text-xs space-y-1.5">
+              <div className="font-bold text-amber-950">Action requise (0 à 60 secondes) :</div>
+              <p className="text-slate-700 leading-relaxed">
+                Confirmez le prélèvement de <strong>{currentAmount} {vipCountryInfo.currency}</strong> sur votre téléphone (
+                <strong>{currentTransaction.phone}</strong>) avec votre code secret Mobile Money, sinon l'opération expirera.
               </p>
             </div>
+          </div>
 
-            {/* The Direct Button */}
-            <div className="max-w-md mx-auto">
+          <div className="p-3 rounded-xl bg-blue-50 border border-blue-200 text-xs text-blue-950 space-y-1.5">
+            <div className="font-bold">En attente d'approbation par l'administrateur</div>
+            <p className="text-[11px] text-slate-700 leading-relaxed">
+              Dès que l'administrateur confirme votre paiement, votre interface bascule automatiquement sur le tableau de bord Aviator & Code 15.
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            {!hasUserConfirmedOnPhone ? (
               <button
-                onClick={handleOpenBot}
-                className="w-full py-5 px-8 rounded-2xl font-black text-base tracking-wider uppercase text-white bg-gradient-to-r from-emerald-600 via-teal-600 to-blue-600 hover:from-emerald-500 hover:to-blue-500 shadow-xl shadow-emerald-700/20 flex items-center justify-center gap-3 transition-all transform hover:-translate-y-0.5 active:translate-y-0 cursor-pointer group"
+                type="button"
+                onClick={() => setHasUserConfirmedOnPhone(true)}
+                className="w-full min-h-[48px] py-3 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-2 cursor-pointer"
               >
-                <Play className="w-5 h-5 fill-current group-hover:scale-110 transition-transform" />
-                <span>LANCER LE BOT AVIATOR MAINTENANT</span>
-                <ExternalLink className="w-5 h-5" />
+                <Check className="w-4 h-4" />
+                <span>J'ai composé mon code secret</span>
               </button>
-              <span className="text-[11px] font-mono text-slate-500 mt-2 block">
-                Redirection automatique vers votre canal / application bot
-              </span>
-            </div>
-          </div>
+            ) : (
+              <div className="p-3 rounded-xl bg-emerald-100 text-emerald-900 border border-emerald-300 text-xs font-bold text-center">
+                Code composé · En attente de validation admin...
+              </div>
+            )}
 
-          {/* Radar Telemetry */}
-          <div className="bg-white border border-slate-200 rounded-2xl p-6 space-y-4 shadow-sm">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <div>
-                <span className="text-xs font-mono text-emerald-700 uppercase font-bold">
-                  Synchronisation Active
-                </span>
-                <h3 className="text-base font-bold text-slate-900">
-                  Serveur Spribe Aviator · {user.bookmaker}
-                </h3>
-              </div>
-              <div className="flex items-center gap-2 text-xs font-mono text-emerald-700">
-                <Radio className="w-4 h-4 text-emerald-600 animate-pulse" />
-                <span>Signaux IA en continu</span>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 font-mono text-xs">
-              <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200">
-                <span className="text-slate-500 block text-[10px]">DERNIER SIGNAL GAGNÉ</span>
-                <span className="text-emerald-700 font-black text-xl">2.84x</span>
-                <span className="text-[10px] text-slate-500 block">Cashout réussi</span>
-              </div>
-              <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200">
-                <span className="text-slate-500 block text-[10px]">PRÉCISION ALGORITHME</span>
-                <span className="text-slate-900 font-black text-xl">98.2%</span>
-                <span className="text-[10px] text-slate-500 block">Sur {user.bookmaker}</span>
-              </div>
-              <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200">
-                <span className="text-slate-500 block text-[10px]">VOTRE FORMULE</span>
-                <span className="text-blue-700 font-black text-xl">{user.vipTier}</span>
-                <span className="text-[10px] text-slate-500 block">Validé par l'admin</span>
-              </div>
-            </div>
-          </div>
-        </div>
-      ) : isWaitingAdminApproval && currentTransaction ? (
-        /* ========================================================================= */
-        /* 4. DEDICATED 60-SECOND CONFIRMATION & ADMIN APPROVAL SCREEN               */
-        /* (Strict requirement: 0 to 60s countdown, warning text & admin wait)       */
-        /* ========================================================================= */
-        <div className="space-y-6 animate-in fade-in">
-          <div className="bg-white border-2 border-amber-300 rounded-3xl p-6 sm:p-10 shadow-lg space-y-8">
-            {/* Top Badge */}
-            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-5">
-              <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-amber-100 text-amber-900 text-xs font-mono font-bold border border-amber-300">
-                <Clock className="w-4 h-4 text-amber-700 animate-pulse" />
-                <span>CONFIRMATION DU DÉBIT EN COURS</span>
-              </div>
-              <span className="text-xs font-mono text-slate-500 font-semibold">
-                Réf : <strong className="text-slate-800">{currentTransaction.id}</strong>
-              </span>
-            </div>
-
-            {/* Countdown Block with 60s timer */}
-            <div className="text-center space-y-4 max-w-2xl mx-auto">
-              <div className="relative inline-flex items-center justify-center">
-                {/* Outer Ring */}
-                <div className="w-32 h-32 sm:w-36 sm:h-36 rounded-full border-6 border-slate-100 flex items-center justify-center relative shadow-inner">
-                  <div
-                    className={`text-3xl sm:text-4xl font-black font-mono tabular-nums transition-colors ${
-                      countdown > 15 ? 'text-amber-600' : countdown > 0 ? 'text-rose-600 animate-pulse' : 'text-slate-400'
-                    }`}
-                  >
-                    00:{countdown < 10 ? `0${countdown}` : countdown}
-                  </div>
-                </div>
-              </div>
-
-              {/* Progress bar */}
-              <div className="w-full max-w-md mx-auto bg-slate-100 h-2.5 rounded-full overflow-hidden">
-                <div
-                  className={`h-full transition-all duration-1000 ${
-                    countdown > 20
-                      ? 'bg-gradient-to-r from-amber-500 to-emerald-500'
-                      : countdown > 5
-                      ? 'bg-amber-500'
-                      : 'bg-rose-500'
-                  }`}
-                  style={{ width: `${(countdown / 60) * 100}%` }}
-                />
-              </div>
-
-              {/* The Explicit User Warning Required */}
-              <div className="p-4 sm:p-5 rounded-2xl bg-amber-50 border-2 border-amber-300 text-left space-y-2">
-                <div className="flex items-center gap-2 font-black text-amber-950 text-sm">
-                  <AlertCircle className="w-5 h-5 text-amber-700 shrink-0" />
-                  <span>ACTION REQUISE DANS LES 0 À 60 SECONDES :</span>
-                </div>
-                <p className="text-xs sm:text-sm text-slate-800 font-medium leading-relaxed">
-                  Vous devez confirmer le paiement dans les <strong>0 à 60 secondes</strong> sur votre téléphone avec votre <strong>code secret Mobile Money</strong>, sinon le paiement sera automatiquement annulé par l'opérateur.
-                </p>
-                <div className="text-[11px] text-amber-900 bg-amber-100/70 p-2.5 rounded-xl font-mono">
-                  📲 Une confirmation / invite USSD a été transmise au <strong>{countryInfo.phonePrefix} {phone}</strong> via <strong>{selectedOperator.name}</strong>.
-                </div>
-              </div>
-            </div>
-
-            {/* Transaction Recap Card */}
-            <div className="p-5 sm:p-6 rounded-2xl bg-slate-50 border border-slate-200 grid grid-cols-2 sm:grid-cols-4 gap-4 text-xs font-mono">
-              <div>
-                <span className="text-slate-400 block text-[10px]">FORMULE CHOISIE</span>
-                <span className="font-bold text-slate-900 text-sm">{selectedVip}</span>
-                <span className="text-[10px] text-emerald-700 block font-sans">
-                  {selectedVip === 'VIP1' ? 'Cotes 1.50x-49.00x' : 'Cotes 49.00x-100.00x+'}
-                </span>
-              </div>
-              <div>
-                <span className="text-slate-400 block text-[10px]">MONTANT TOTAL</span>
-                <span className="font-black text-emerald-700 text-base">{currentAmount} FCFA</span>
-                <span className="text-[10px] text-slate-500 block font-sans">Tarif automatique</span>
-              </div>
-              <div>
-                <span className="text-slate-400 block text-[10px]">OPÉRATEUR</span>
-                <span className="font-bold text-slate-900 flex items-center gap-1">
-                  <span>{countryInfo.flag}</span>
-                  <span className="truncate">{selectedOperator.name}</span>
-                </span>
-                <span className="text-[10px] text-slate-500 block font-sans">{countryInfo.name}</span>
-              </div>
-              <div>
-                <span className="text-slate-400 block text-[10px]">NUMÉRO CLIENT</span>
-                <span className="font-bold text-slate-900">{countryInfo.phonePrefix} {phone}</span>
-                <span className="text-[10px] text-slate-500 block font-sans">{user.bookmaker}</span>
-              </div>
-            </div>
-
-            {/* Waiting Admin Approval Card (NEVER auto-validates!) */}
-            <div className="p-6 rounded-2xl bg-blue-50/70 border-2 border-blue-200 space-y-4">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-blue-100 text-blue-800 flex items-center justify-center shrink-0">
-                  <Hourglass className="w-5 h-5 text-blue-700 animate-spin" />
-                </div>
-                <div>
-                  <h4 className="text-sm font-black text-slate-900">
-                    Statut : En attente d'approbation par l'administrateur
-                  </h4>
-                  <p className="text-xs text-slate-600">
-                    Votre demande est transmise en direct dans l'espace privé de l'administrateur.
-                  </p>
-                </div>
-              </div>
-
-              <div className="p-4 rounded-xl bg-white border border-blue-150 text-xs text-slate-700 space-y-2">
-                <div className="flex items-center gap-2 text-blue-900 font-bold">
-                  <span className="w-2.5 h-2.5 rounded-full bg-blue-600 animate-ping" />
-                  <span>Validation administrative en cours :</span>
-                </div>
-                <p className="leading-relaxed">
-                  Dès que vous avez composé votre code secret sur votre téléphone et que l'administrateur clique sur <strong>« Confirmer »</strong> dans son tableau de bord, votre licence VIP est immédiatement activée et le bouton d'accès au Bot Aviator apparaîtra automatiquement ici sans avoir besoin de recharger.
-                </p>
-              </div>
-
-              {/* Client Confirmation Feedback Action */}
-              <div className="flex flex-col sm:flex-row items-center gap-3 pt-2">
-                {!hasUserConfirmedOnPhone ? (
-                  <button
-                    type="button"
-                    onClick={() => setHasUserConfirmedOnPhone(true)}
-                    className="w-full sm:w-auto flex-1 py-3.5 px-6 rounded-xl font-bold text-xs uppercase tracking-wider bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs flex items-center justify-center gap-2 transition-all cursor-pointer"
-                  >
-                    <Check className="w-4 h-4" />
-                    <span>J'ai composé mon code secret sur mon téléphone</span>
-                  </button>
-                ) : (
-                  <div className="w-full sm:w-auto flex-1 py-3 px-4 rounded-xl bg-emerald-100 text-emerald-900 border border-emerald-300 text-xs font-bold flex items-center justify-center gap-2">
-                    <CheckCircle2 className="w-4 h-4 text-emerald-700" />
-                    <span>Code composé · En attente du clic de confirmation de l'administrateur...</span>
-                  </div>
-                )}
-
-                {countdown === 0 && (
-                  <button
-                    type="button"
-                    onClick={handleRestartCountdown}
-                    className="py-3.5 px-5 rounded-xl font-bold text-xs bg-amber-600 hover:bg-amber-700 text-white flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
-                  >
-                    <RefreshCw className="w-3.5 h-3.5" />
-                    <span>Relancer le décompte (60s)</span>
-                  </button>
-                )}
-
+            <div className="flex items-center gap-2">
+              {countdown === 0 && (
                 <button
                   type="button"
-                  onClick={handleCancelPending}
-                  className="py-3.5 px-4 rounded-xl font-semibold text-xs text-slate-600 hover:text-slate-900 hover:bg-slate-200 transition-colors cursor-pointer flex items-center gap-1.5"
+                  onClick={() => {
+                    setCountdown(60);
+                    setHasUserConfirmedOnPhone(false);
+                  }}
+                  className="flex-1 min-h-[44px] py-2.5 px-3 rounded-xl bg-amber-600 text-white text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer"
                 >
-                  <ArrowLeft className="w-3.5 h-3.5" />
-                  <span>Changer de formule ou numéro</span>
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  <span>Relancer 60s</span>
                 </button>
-              </div>
+              )}
+              <button
+                type="button"
+                onClick={() => {
+                  setIsWaitingAdminApproval(false);
+                  setCurrentTransaction(null);
+                  setCountdown(60);
+                }}
+                className="flex-1 min-h-[44px] py-2.5 px-3 rounded-xl bg-slate-100 text-slate-700 text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                <ArrowLeft className="w-3.5 h-3.5" />
+                <span>Modifier</span>
+              </button>
             </div>
           </div>
         </div>
       ) : (
-        /* ========================================================================= */
-        /* 5. IF UNPAID & NO PENDING TRANSACTION: SELECTION & FORM                   */
-        /* ========================================================================= */
-        <div className="space-y-8 animate-in fade-in">
-          {/* Mandatory Payment Notice (Clean Day Mode) */}
-          <div className="bg-amber-50/70 border border-amber-200 rounded-2xl p-6 sm:p-7 space-y-3 shadow-xs">
-            <div className="flex items-start gap-4">
-              <div className="w-12 h-12 rounded-xl bg-amber-100 border border-amber-200 text-amber-800 flex items-center justify-center shrink-0">
-                <Lock className="w-6 h-6 text-amber-700" />
+        /* VIP Plan Selection + 8-Country XOF Mobile Money Checkout Form */
+        <div className="space-y-4">
+          <div className="grid grid-cols-1 gap-3">
+            {/* VIP 1 */}
+            <div
+              onClick={() => setSelectedVip('VIP1')}
+              className={`p-4 rounded-2xl border-2 cursor-pointer transition-all space-y-2 ${
+                selectedVip === 'VIP1'
+                  ? 'border-emerald-600 bg-emerald-50/70 shadow-sm'
+                  : 'border-slate-200 bg-white'
+              }`}
+            >
+              <div className="flex items-center justify-between">
+                <div>
+                  <span className="text-[10px] font-mono font-bold text-emerald-700 uppercase block">
+                    Garanti 100% Sûr · Capital 500 à 50 000 F
+                  </span>
+                  <h3 className="text-base font-black text-slate-900">VIP 1 · 1.50x à 49.00x</h3>
+                </div>
+                <span className="font-mono font-black text-lg text-emerald-700">550 XOF</span>
               </div>
-              <div className="space-y-1">
-                <h2 className="text-lg sm:text-xl font-bold text-slate-900">
-                  Règle d'Accès au Bot : Règlement Requis
-                </h2>
-                <p className="text-xs sm:text-sm text-slate-600 leading-relaxed">
-                  Le paiement est toujours accessible. Sans le règlement de votre formule VIP par Mobile Money et sa validation par l'administration, vous ne pouvez pas avoir accès au bot. Dès votre paiement validé par l'administrateur, le bouton d'accès apparaîtra immédiatement et vous redirigera vers l'application du bot.
-                </p>
+              <div className="text-[11px] text-slate-600">
+                Accès direct au Jeu Aviator, Code 15 exact 10s avant chaque vol et retraits Mobile Money.
+              </div>
+            </div>
+
+            {/* VIP 2 */}
+            <div
+              onClick={() => setSelectedVip('VIP2')}
+              className={`p-4 rounded-2xl border-2 cursor-pointer transition-all space-y-2 ${
+                selectedVip === 'VIP2'
+                  ? 'border-blue-600 bg-blue-50/70 shadow-sm'
+                  : 'border-slate-200 bg-white'
+              }`}
+            >
+              <div className="flex items-center justify-between">
+                <div>
+                  <span className="text-[10px] font-mono font-bold text-blue-700 uppercase block">
+                    Garanti 100% Sûr · Capital 50 000 à 100 000 F
+                  </span>
+                  <h3 className="text-base font-black text-slate-900">VIP 2 · 49.00x à 100.00x+</h3>
+                </div>
+                <span className="font-mono font-black text-lg text-blue-700">1 500 XOF</span>
+              </div>
+              <div className="text-[11px] text-slate-600">
+                Signaux hautes cotes prioritaires, Code 15 en direct et support prioritaire.
               </div>
             </div>
           </div>
 
-          {/* THE TWO VIPS - AUTOMATIC SELECTION */}
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <span className="text-xs font-mono font-bold text-emerald-700 uppercase tracking-wider">
-                  Sélection Rapide
-                </span>
-                <h3 className="text-xl font-bold text-slate-900">
-                  Deux Places VIP Disponibles pour le Bot Aviator
-                </h3>
-              </div>
-              <span className="text-xs font-mono text-slate-500">
-                Montant appliqué automatiquement
+          {/* Mobile Money Checkout (8 XOF UEMOA Countries + Mandatory Full Name + Phone) */}
+          <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-xs space-y-4">
+            <div>
+              <span className="text-[10px] font-mono font-bold text-emerald-700 uppercase">
+                Paiement Mobile Money Zone UEMOA ({vipCountryInfo.currency})
               </span>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {/* VIP 1 */}
-              <div
-                onClick={() => setSelectedVip('VIP1')}
-                className={`p-6 rounded-2xl border-2 cursor-pointer transition-all flex flex-col justify-between ${
-                  selectedVip === 'VIP1'
-                    ? 'border-emerald-600 bg-emerald-50/70 shadow-md ring-2 ring-emerald-500/30'
-                    : 'border-slate-200 bg-white hover:border-slate-300'
-                }`}
-              >
-                <div>
-                  <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-                    <div>
-                      <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-100 border border-emerald-200 text-emerald-800 text-[10px] font-mono font-bold uppercase mb-1">
-                        <ShieldCheck className="w-3 h-3 text-emerald-600" />
-                        <span>GARANTI 100% SÛR</span>
-                      </div>
-                      <h4 className="text-xl font-extrabold text-slate-900">VIP 1 · Cotes 1.50x à 49.00x</h4>
-                    </div>
-                    <div className="text-right">
-                      <span className="text-xs text-emerald-800 font-mono font-bold px-2 py-0.5 rounded bg-emerald-100 border border-emerald-200">
-                        2 places disponibles
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* Target Capital explicitly stated */}
-                  <div className="my-4 p-3.5 rounded-xl bg-slate-50 border border-slate-200 text-xs">
-                    <span className="text-slate-500 block text-[11px] font-mono">
-                      CAPITAL CONSEILLÉ DU JOUEUR :
-                    </span>
-                    <strong className="text-slate-900 text-sm">
-                      Pour ceux qui ont un capital de 500 F jusqu'à 50 000 FCFA
-                    </strong>
-                  </div>
-
-                  <div className="mb-4">
-                    <div className="text-3xl font-black font-mono text-slate-900 tabular-nums">
-                      {vip1Price} <span className="text-sm font-bold text-emerald-700">FCFA</span>
-                    </div>
-                    <span className="text-[11px] text-slate-500">
-                      Montant unique sélectionné automatiquement
-                    </span>
-                  </div>
-
-                  <ul className="space-y-2 text-xs text-slate-600">
-                    <li className="flex items-center gap-2">
-                      <Check className="w-4 h-4 text-emerald-600 shrink-0" />
-                      <span className="font-semibold text-slate-900">Cotes sécurisées de 1.50x à 49.00x</span>
-                    </li>
-                    <li className="flex items-center gap-2">
-                      <Check className="w-4 h-4 text-emerald-600 shrink-0" />
-                      <span className="text-emerald-700 font-bold">Fiabilité certifiée : Garanti 100% sûr</span>
-                    </li>
-                    <li className="flex items-center gap-2">
-                      <Check className="w-4 h-4 text-emerald-600 shrink-0" />
-                      <span>Optimisé pour capital de 500 F à 50 000 FCFA</span>
-                    </li>
-                    <li className="flex items-center gap-2">
-                      <Check className="w-4 h-4 text-emerald-600 shrink-0" />
-                      <span>Compatible 1xBet, Premier Bet, Paripesa, Melbet & Betwinner</span>
-                    </li>
-                  </ul>
-                </div>
-
-                <div className="mt-6 pt-4 border-t border-slate-100">
-                  <div className={`py-2 px-3 rounded-xl text-center text-xs font-bold ${
-                    selectedVip === 'VIP1'
-                      ? 'bg-emerald-600 text-white shadow-xs'
-                      : 'bg-slate-100 text-slate-600'
-                  }`}>
-                    {selectedVip === 'VIP1' ? '✓ Formule VIP 1 Sélectionnée (550 F)' : 'Sélectionner VIP 1 (550 F)'}
-                  </div>
-                </div>
-              </div>
-
-              {/* VIP 2 */}
-              <div
-                onClick={() => setSelectedVip('VIP2')}
-                className={`p-6 rounded-2xl border-2 cursor-pointer transition-all flex flex-col justify-between ${
-                  selectedVip === 'VIP2'
-                    ? 'border-blue-600 bg-blue-50/70 shadow-md ring-2 ring-blue-500/30'
-                    : 'border-slate-200 bg-white hover:border-slate-300'
-                }`}
-              >
-                <div>
-                  <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-                    <div>
-                      <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-blue-100 border border-blue-200 text-blue-800 text-[10px] font-mono font-bold uppercase mb-1">
-                        <ShieldCheck className="w-3 h-3 text-blue-600" />
-                        <span>GARANTI 100% SÛR</span>
-                      </div>
-                      <h4 className="text-xl font-extrabold text-slate-900">VIP 2 · Cotes 49.00x à 100.00x+</h4>
-                    </div>
-                    <div className="text-right">
-                      <span className="text-xs text-blue-800 font-mono font-bold px-2 py-0.5 rounded bg-blue-100 border border-blue-200">
-                        2 places disponibles
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* Target Capital explicitly stated */}
-                  <div className="my-4 p-3.5 rounded-xl bg-slate-50 border border-slate-200 text-xs">
-                    <span className="text-slate-500 block text-[11px] font-mono">
-                      CAPITAL CONSEILLÉ DU JOUEUR :
-                    </span>
-                    <strong className="text-slate-900 text-sm">
-                      Pour ceux qui ont un capital de 50 000 F jusqu'à 100 000 FCFA
-                    </strong>
-                  </div>
-
-                  <div className="mb-4">
-                    <div className="text-3xl font-black font-mono text-slate-900 tabular-nums">
-                      {vip2Price} <span className="text-sm font-bold text-blue-700">FCFA</span>
-                    </div>
-                    <span className="text-[11px] text-slate-500">
-                      Montant unique sélectionné automatiquement
-                    </span>
-                  </div>
-
-                  <ul className="space-y-2 text-xs text-slate-600">
-                    <li className="flex items-center gap-2">
-                      <Check className="w-4 h-4 text-blue-600 shrink-0" />
-                      <span className="font-semibold text-slate-900">Cotes explosives de 49.00x à 100.00x+</span>
-                    </li>
-                    <li className="flex items-center gap-2">
-                      <Check className="w-4 h-4 text-blue-600 shrink-0" />
-                      <span className="text-blue-700 font-bold">Fiabilité certifiée : Garanti 100% sûr</span>
-                    </li>
-                    <li className="flex items-center gap-2">
-                      <Check className="w-4 h-4 text-blue-600 shrink-0" />
-                      <span>Optimisé pour capital de 50 000 F à 100 000 FCFA</span>
-                    </li>
-                    <li className="flex items-center gap-2">
-                      <Check className="w-4 h-4 text-blue-600 shrink-0" />
-                      <span>Compatible 1xBet, Premier Bet, Paripesa, Melbet & Betwinner</span>
-                    </li>
-                  </ul>
-                </div>
-
-                <div className="mt-6 pt-4 border-t border-slate-100">
-                  <div className={`py-2 px-3 rounded-xl text-center text-xs font-bold ${
-                    selectedVip === 'VIP2'
-                      ? 'bg-blue-600 text-white shadow-xs'
-                      : 'bg-slate-100 text-slate-600'
-                  }`}>
-                    {selectedVip === 'VIP2' ? '✓ Formule VIP 2 Sélectionnée (1 500 F)' : 'Sélectionner VIP 2 (1 500 F)'}
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* 5. MOMO PAYMENT CHECKOUT FORM */}
-          <div className="bg-white border border-slate-200 rounded-2xl p-6 sm:p-8 space-y-6 shadow-sm">
-            <div className="border-b border-slate-100 pb-4">
-              <span className="text-xs font-mono font-bold text-emerald-700 uppercase tracking-wider">
-                Paiement Mobile Money Sécurisé
-              </span>
-              <h3 className="text-lg font-bold text-slate-900 mt-1">
-                Régler {currentAmount} FCFA pour débloquer votre accès {selectedVip}
+              <h3 className="text-sm font-black text-slate-900">
+                Activer {selectedVip} · {currentAmount} {vipCountryInfo.currency}
               </h3>
-              <p className="text-xs text-slate-500 mt-0.5">
-                Moyens de paiement activés au <strong>{countryInfo.name}</strong> ({countryInfo.flag})
-              </p>
             </div>
 
-            {/* Operator Selection */}
-            <div>
-              <label className="block text-xs font-bold text-slate-700 mb-2 uppercase tracking-wider">
-                Choisissez votre opérateur local :
+            {/* 8 XOF Countries Directory Card */}
+            <div className="space-y-1.5">
+              <label className="block text-[11px] font-bold text-slate-700 uppercase">
+                Pays de paiement (8 pays Zone CFA XOF)
               </label>
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                {countryInfo.operators.map((op) => {
-                  const isSelected = selectedOperator.id === op.id;
-                  return (
-                    <button
-                      key={op.id}
-                      type="button"
-                      onClick={() => setSelectedOperator(op)}
-                      className={`p-3 rounded-xl border-2 text-left transition-all cursor-pointer ${
-                        isSelected
-                          ? 'border-emerald-600 bg-emerald-50/80 shadow-xs ring-1 ring-emerald-500/40'
-                          : 'border-slate-200 bg-slate-50 hover:bg-white hover:border-slate-300'
-                      }`}
-                    >
-                      <div className="flex items-center justify-between mb-1">
-                        <span className={`px-1.5 py-0.5 rounded text-[10px] font-mono font-bold ${op.colorBg} ${op.colorText}`}>
-                          {op.logoText}
-                        </span>
-                        {isSelected && <Check className="w-3.5 h-3.5 text-emerald-600" />}
-                      </div>
-                      <div className="text-xs font-bold text-slate-900 truncate">{op.name}</div>
-                    </button>
-                  );
-                })}
-              </div>
+              <select
+                value={vipCountryCode}
+                onChange={(e) => {
+                  const nextCode = e.target.value as CountryCode;
+                  setVipCountryCode(nextCode);
+                  const nextCountry = SUPPORTED_COUNTRIES[nextCode];
+                  setSelectedOperator(nextCountry.operators[0] || null);
+                }}
+                className="w-full px-3 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-xs font-bold text-slate-900 focus:outline-none focus:border-emerald-600"
+              >
+                {COUNTRIES_LIST.map((c) => (
+                  <option key={c.code} value={c.code}>
+                    {c.flag} {c.name} ({c.currency}) — {c.operators.length > 0 ? c.operators.map((o) => o.name).join(', ') : 'Indisponible'}
+                  </option>
+                ))}
+              </select>
             </div>
 
-            {/* Phone Input with Prefix */}
-            <div>
-              <label className="block text-xs font-bold text-slate-700 mb-2 uppercase tracking-wider">
-                Numéro Mobile Money ({selectedOperator.name}) :
+            {/* Active SasPay Operators for selected country */}
+            <div className="space-y-1.5">
+              <label className="block text-[11px] font-bold text-slate-700 uppercase">
+                Réseau disponible ({vipCountryInfo.flag} {vipCountryInfo.name} · {vipCountryInfo.currency})
               </label>
-              <div className="flex rounded-xl shadow-xs max-w-md">
-                <span className="inline-flex items-center px-3.5 rounded-l-xl border border-r-0 border-slate-300 bg-slate-100 text-slate-700 text-xs font-mono font-bold">
-                  {countryInfo.flag} {countryInfo.phonePrefix}
+              {vipCountryInfo.operators.length > 0 ? (
+                <div className="grid grid-cols-2 gap-2">
+                  {vipCountryInfo.operators.map((op) => {
+                    const isSelected = selectedOperator?.id === op.id;
+                    return (
+                      <button
+                        key={op.id}
+                        type="button"
+                        onClick={() => setSelectedOperator(op)}
+                        className={`p-2.5 rounded-xl border-2 text-left text-xs font-bold cursor-pointer flex items-center justify-between ${
+                          isSelected
+                            ? 'border-emerald-600 bg-emerald-50 text-emerald-900'
+                            : 'border-slate-200 bg-slate-50 text-slate-700'
+                        }`}
+                      >
+                        <span className="truncate">{op.name}</span>
+                        {isSelected && <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0" />}
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-900">
+                  {vipCountryInfo.gatewayNote || 'Aucun réseau actif pour ce pays.'}
+                </div>
+              )}
+              {vipCountryInfo.gatewayNote && vipCountryInfo.operators.length > 0 && (
+                <span className="text-[10px] text-slate-500 block">{vipCountryInfo.gatewayNote}</span>
+              )}
+            </div>
+
+            {/* Mandatory Full Name (Aucun paiement anonyme) */}
+            <div>
+              <label className="block text-[11px] font-bold text-slate-700 uppercase mb-1">
+                Nom complet du client (Obligatoire)
+              </label>
+              <input
+                type="text"
+                required
+                value={vipCustomerName}
+                onChange={(e) => setVipCustomerName(e.target.value)}
+                placeholder="Ex: Kouamé Jean-Marc"
+                className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl font-semibold text-slate-900 focus:outline-none focus:border-emerald-600"
+              />
+            </div>
+
+            <div>
+              <label className="block text-[11px] font-bold text-slate-700 uppercase mb-1">
+                ID de votre compte {user.bookmaker} (inscrit à l'inscription)
+              </label>
+              <input
+                type="text"
+                required
+                value={vipBookmakerId}
+                onChange={(e) => setVipBookmakerId(e.target.value)}
+                placeholder="Ex: 849201453"
+                className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl font-mono font-bold text-slate-900 focus:outline-none focus:border-emerald-600"
+              />
+            </div>
+
+            <div>
+              <label className="block text-[11px] font-bold text-slate-700 uppercase mb-1">
+                Numéro Mobile Money {selectedOperator ? `(${selectedOperator.name})` : ''}
+              </label>
+              <div className="flex">
+                <span className="inline-flex items-center px-3 rounded-l-xl border border-r-0 border-slate-300 bg-slate-100 text-xs font-mono font-bold text-slate-700">
+                  {vipCountryInfo.flag} {vipCountryInfo.phonePrefix}
                 </span>
                 <input
                   type="tel"
                   required
                   value={phone}
                   onChange={(e) => setPhone(e.target.value)}
-                  placeholder={countryInfo.phonePlaceholder}
-                  className="w-full px-4 py-3 bg-slate-50 border border-slate-300 rounded-r-xl text-sm font-mono text-slate-900 placeholder-slate-400 focus:outline-none focus:border-emerald-600 focus:bg-white transition-colors"
+                  placeholder={vipCountryInfo.phonePlaceholder}
+                  className="w-full px-3 py-2.5 bg-slate-50 border border-slate-300 rounded-r-xl font-mono text-slate-900 focus:outline-none focus:border-emerald-600"
                 />
               </div>
-              <span className="text-[11px] text-slate-500 mt-1 block">
-                {selectedOperator.instructionFr}
-              </span>
+              {selectedOperator && (
+                <span className="text-[11px] text-slate-500 mt-1 block">{selectedOperator.instructionFr}</span>
+              )}
             </div>
 
             {paymentError && (
-              <div className="p-3.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs flex items-center gap-2">
-                <AlertCircle className="w-4 h-4 shrink-0 text-rose-600" />
+              <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 shrink-0" />
                 <span>{paymentError}</span>
               </div>
             )}
 
-            {/* Launch Payment CTA */}
             <button
               type="button"
-              onClick={handleLaunchPayment}
-              disabled={isPaying || isWaitingAdminApproval}
-              className="w-full py-4 px-6 bg-gradient-to-r from-emerald-600 via-teal-600 to-blue-600 hover:from-emerald-700 hover:to-blue-700 text-white font-bold text-sm tracking-wider uppercase rounded-xl shadow-md flex items-center justify-center gap-2 transition-all active:scale-[0.99] disabled:opacity-60 cursor-pointer"
+              onClick={handleLaunchVipPayment}
+              disabled={isPaying || isWaitingAdminApproval || !selectedOperator}
+              className="w-full min-h-[50px] py-3.5 px-4 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs uppercase tracking-wider rounded-xl shadow-md flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60"
             >
-              {isPaying ? (
-                <>
-                  <div className="w-4 h-4 rounded-full border-2 border-white border-t-transparent animate-spin" />
-                  <span>Envoi de la demande de paiement...</span>
-                </>
-              ) : (
-                <>
-                  <Smartphone className="w-4 h-4" />
-                  <span>
-                    Payer {currentAmount} FCFA ({selectedVip}) par Mobile Money
-                  </span>
-                  <ArrowRight className="w-4 h-4 ml-1" />
-                </>
-              )}
+              <Smartphone className="w-4 h-4" />
+              <span>{isPaying ? 'Envoi...' : `Payer ${currentAmount} ${vipCountryInfo.currency} (${selectedVip})`}</span>
+              <ArrowRight className="w-4 h-4" />
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* Persistent Client Operations History (always saved & visible) */}
+      {(clientOperations.length > 0 || clientTransactions.length > 0) && (
+        <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-xs space-y-3">
+          <div className="flex items-center justify-between border-b border-slate-100 pb-2">
+            <h3 className="text-xs font-black text-slate-900 uppercase flex items-center gap-1.5">
+              <Receipt className="w-4 h-4 text-emerald-600" />
+              Historique Opérations
+            </h3>
+            <span className="text-[10px] font-mono text-slate-500">
+              {clientOperations.length} opération(s)
+            </span>
+          </div>
+
+          <div className="space-y-2">
+            {clientOperations.map((op) => (
+              <div
+                key={op.id}
+                className="p-2.5 rounded-xl bg-slate-50 border border-slate-200 text-xs flex items-center justify-between gap-2"
+              >
+                <div className="min-w-0">
+                  <div className="font-bold text-slate-900 truncate">{op.title}</div>
+                  <div className="text-[10px] text-slate-500 truncate">{op.description}</div>
+                </div>
+                <div className="text-right shrink-0">
+                  <div className="font-mono font-bold text-slate-900">{op.amount.toLocaleString('fr-FR')} F</div>
+                  <span
+                    className={`text-[10px] font-mono font-bold ${
+                      op.status === 'SUCCESS'
+                        ? 'text-emerald-700'
+                        : op.status === 'PENDING'
+                        ? 'text-amber-700'
+                        : 'text-rose-700'
+                    }`}
+                  >
+                    {op.status === 'SUCCESS' ? 'VALIDÉ' : op.status === 'PENDING' ? 'EN ATTENTE' : 'REJETÉ'}
+                  </span>
+                </div>
+              </div>
+            ))}
           </div>
         </div>
       )}

@@ -1,20 +1,40 @@
 {
   "users": [
     {
+      "id": "usr_1794488053519",
+      "fullName": "Marc Dossou",
+      "phone": "+2290197002233",
+      "password": "monSecret77",
+      "country": "Bénin",
+      "bookmaker": "1xBet",
+      "vipTier": "VIP1",
+      "paymentStatus": "paid",
+      "registeredAt": "12/11/2026 12:54:13",
+      "notes": "Accès VIP validé par l'administrateur",
+      "amountPaid": 550,
+      "paymentReference": "a534a1df-b286-48b9-a590-db6774443def",
+      "paymentDate": "12/11/2026 13:05:41",
+      "paymentMethod": "MTN",
+      "balance": 0
+    },
+    {
       "id": "usr_1794400619251",
       "fullName": "Yacouba Koné",
       "phone": "+2250708091011",
+      "password": "password123",
       "country": "Côte d’Ivoire",
       "bookmaker": "1xBet",
       "vipTier": "VIP2",
       "paymentStatus": "unpaid",
       "registeredAt": "11/11/2026 12:36:59",
-      "notes": "Demande de paiement en attente pour VIP2"
+      "notes": "Demande de paiement en attente pour VIP2",
+      "balance": 0
     },
     {
       "id": "usr_1794400578424",
       "fullName": "Jean-Luc Akpo",
       "phone": "+2290197001122",
+      "password": "password123",
       "country": "Bénin",
       "bookmaker": "1xBet",
       "vipTier": "VIP1",
@@ -24,12 +44,14 @@
       "amountPaid": 550,
       "paymentReference": "9b4bc85b-0d0c-4606-b64d-2c038694d8ff",
       "paymentDate": "11/11/2026 13:01:11",
-      "paymentMethod": "MTN"
+      "paymentMethod": "MTN",
+      "balance": 0
     },
     {
       "id": "usr_1794345796339",
       "fullName": "Alain Agossou",
       "phone": "+2290197887766",
+      "password": "password123",
       "country": "Bénin",
       "bookmaker": "1xBet",
       "vipTier": "VIP1",
@@ -39,10 +61,45 @@
       "amountPaid": 550,
       "paymentReference": "32a2c374-ac0c-4745-bb3c-c4e3e62d685c",
       "paymentDate": "10/11/2026 21:23:32",
-      "paymentMethod": "MTN"
+      "paymentMethod": "MTN",
+      "balance": 0
     }
   ],
   "transactions": [
+    {
+      "id": "tx_1794488063080",
+      "saspayPaymentId": "a534a1df-b286-48b9-a590-db6774443def",
+      "amount": 550,
+      "currency": "XOF",
+      "country": "BJ",
+      "countryName": "Bénin",
+      "network": "mtn_bj",
+      "operatorName": "MTN Mobile Money",
+      "operatorBrand": "MTN",
+      "phone": "+2290197002233",
+      "customerName": "Marc Dossou",
+      "customerEmail": "marc@test.com",
+      "description": "Paiement VIP1",
+      "status": "SUCCESS",
+      "statusMessage": "Paiement vérifié et validé avec succès par l’administrateur.",
+      "createdAt": "2026-11-12T12:54:25.202Z",
+      "updatedAt": "2026-11-12T13:05:41.317Z",
+      "idempotencyKey": "idem_1794488063080_2qhfo5",
+      "apiResponse": {
+        "success": true,
+        "data": {
+          "message": "Payment pushed successfully",
+          "id": "a534a1df-b286-48b9-a590-db6774443def",
+          "status": "PENDING",
+          "checkout_url": "",
+          "instructions": [
+            "Accepted"
+          ],
+          "bank_transfer": {}
+        },
+        "code": 201
+      }
+    },
     {
       "id": "tx_1794402062765",
       "saspayPaymentId": "9b4bc85b-0d0c-4606-b64d-2c038694d8ff",
@@ -182,40 +239,401 @@
   ],
   "supportConversations": [
     {
-      "userId": "guest_visitor",
-      "userName": "Visiteur Client",
-      "userPhone": "",
+      "userId": "usr_1794536810364",
+      "userName": "Test Firebase Durable",
+      "userPhone": "+2290161223344",
       "userCountry": "Bénin",
-      "lastMessageAt": "2026-11-11T12:54:57.284Z",
+      "lastMessageAt": "2026-11-13T02:26:52.569Z",
       "unreadCountClient": 1,
       "unreadCountAdmin": 0,
       "messages": [
         {
-          "id": "msg_welcome_1794401697284",
+          "id": "msg_sys_1794536812574",
           "sender": "admin",
-          "text": "Bonjour et bienvenue sur le Service Client AVIATOR PREDICTOR VIP PRO ! Notre équipe est connectée pour valider vos paiements et répondre à vos questions.",
-          "timestamp": "2026-11-11T12:54:57.284Z",
+          "text": "💰 Rechargement Validé : Votre dépôt Mobile Money de 10 000 FCFA a été APPROUVÉ et crédité sur votre solde Aviator !",
+          "timestamp": "2026-11-13T02:26:52.569Z",
           "read": false
         }
       ]
     },
     {
-      "userId": "usr_1794342446449",
-      "userName": "Haba olih",
-      "userPhone": "+2290169644023",
+      "userId": "usr_1794535899179",
+      "userName": "Test VIP Protection",
+      "userPhone": "+2290197001122",
       "userCountry": "Bénin",
-      "lastMessageAt": "2026-11-11T12:32:38.404Z",
+      "lastMessageAt": "2026-11-13T02:12:30.746Z",
+      "unreadCountClient": 3,
+      "unreadCountAdmin": 0,
+      "messages": [
+        {
+          "id": "msg_sys_1794535901278",
+          "sender": "admin",
+          "text": "🎉 Félicitations ! Votre paiement Mobile Money de 15000 FCFA via MTN MoMo (+2290197001122) a été VALIDÉ par l'administration. Votre tableau de bord Aviator & Code 15 est maintenant ACTIF !",
+          "timestamp": "2026-11-13T02:11:41.278Z",
+          "read": false
+        },
+        {
+          "id": "msg_sys_1794535950188",
+          "sender": "admin",
+          "text": "🎉 Félicitations ! Votre paiement Mobile Money de 15000 FCFA via MTN MoMo (+2290197001122) a été VALIDÉ par l'administration. Votre tableau de bord Aviator & Code 15 est maintenant ACTIF !",
+          "timestamp": "2026-11-13T02:12:30.163Z",
+          "read": false
+        },
+        {
+          "id": "msg_sys_1794535950747",
+          "sender": "admin",
+          "text": "⚠️ Information Paiement : Votre demande de 15000 FCFA via Free Money a été REJETÉE par l'administration. Motif : Duplicate old request.",
+          "timestamp": "2026-11-13T02:12:30.746Z",
+          "read": false
+        }
+      ]
+    },
+    {
+      "userId": "usr_1794531042987",
+      "userName": "Hou",
+      "userPhone": "+22997979798",
+      "userCountry": "Bénin",
+      "lastMessageAt": "2026-11-13T01:04:05.190Z",
+      "unreadCountClient": 0,
+      "unreadCountAdmin": 0,
+      "messages": []
+    },
+    {
+      "userId": "usr_1794488053519",
+      "userName": "Marc Dossou",
+      "userPhone": "+2290197002233",
+      "userCountry": "Bénin",
+      "lastMessageAt": "2026-11-12T13:05:41.350Z",
       "unreadCountClient": 1,
       "unreadCountAdmin": 0,
       "messages": [
         {
-          "id": "msg_welcome_1794400358404",
+          "id": "msg_sys_1794488741350",
           "sender": "admin",
-          "text": "Bonjour et bienvenue sur le Service Client AVIATOR PREDICTOR VIP PRO ! Notre équipe est connectée pour valider vos paiements et répondre à vos questions.",
-          "timestamp": "2026-11-11T12:32:38.404Z",
+          "text": "🎉 Félicitations ! Votre paiement Mobile Money de 550 FCFA via MTN Mobile Money (+2290197002233) a été vérifié et VALIDÉ par l'administration. Votre accès officiel au Bot Aviator est maintenant ACTIF ! Cliquez sur le bouton \"LANCER LE BOT\" sur votre compte.",
+          "timestamp": "2026-11-12T13:05:41.350Z",
           "read": false
         }
       ]
+    },
+    {
+      "userId": "guest_visitor",
+      "userName": "Visiteur Client",
+      "userPhone": "",
+      "userCountry": "Bénin",
+      "lastMessageAt": "2026-11-12T13:00:58.481Z",
+      "unreadCountClient": 0,
+      "unreadCountAdmin": 0,
+      "messages": []
+    }
+  ],
+  "operations": [
+    {
+      "id": "op_tx_1794488063080",
+      "userId": "usr_1794488053519",
+      "userPhone": "+2290197002233",
+      "type": "VIP_ACTIVATION",
+      "amount": 550,
+      "status": "SUCCESS",
+      "title": "Activation Licence VIP",
+      "description": "Paiement vérifié et validé avec succès par l’administrateur.",
+      "reference": "a534a1df-b286-48b9-a590-db6774443def",
+      "createdAt": "2026-11-12T12:54:25.202Z",
+      "updatedAt": "2026-11-12T13:05:41.317Z"
+    },
+    {
+      "id": "op_tx_1794402062765",
+      "userId": "usr_1794400578424",
+      "userPhone": "+2290197001122",
+      "type": "VIP_ACTIVATION",
+      "amount": 550,
+      "status": "SUCCESS",
+      "title": "Activation Licence VIP",
+      "description": "Paiement vérifié et validé avec succès par l’administrateur.",
+      "reference": "9b4bc85b-0d0c-4606-b64d-2c038694d8ff",
+      "createdAt": "2026-11-11T13:01:04.804Z",
+      "updatedAt": "2026-11-11T13:01:11.803Z"
+    },
+    {
+      "id": "op_tx_1794400617342",
+      "userId": "usr_1794400619251",
+      "userPhone": "+2250708091011",
+      "type": "VIP_ACTIVATION",
+      "amount": 1500,
+      "status": "FAILED",
+      "title": "Activation Licence VIP",
+      "description": "Solde insuffisant constaté sur le numéro",
+      "reference": "a06ed15d-d41f-49d1-8483-f23354e2d5e1",
+      "createdAt": "2026-11-11T12:36:59.251Z",
+      "updatedAt": "2026-11-11T12:37:23.724Z"
+    },
+    {
+      "id": "op_tx_1794400576181",
+      "userId": "usr_1794400578424",
+      "userPhone": "+2290197001122",
+      "type": "VIP_ACTIVATION",
+      "amount": 550,
+      "status": "SUCCESS",
+      "title": "Activation Licence VIP",
+      "description": "Paiement vérifié et validé avec succès par l’administrateur.",
+      "reference": "9708bcc5-bf5e-4ab6-8d3d-b15c4c7099d9",
+      "createdAt": "2026-11-11T12:36:18.424Z",
+      "updatedAt": "2026-11-11T12:36:30.017Z"
+    },
+    {
+      "id": "op_tx_1794345803118",
+      "userId": "usr_1794345796339",
+      "userPhone": "+2290197887766",
+      "type": "VIP_ACTIVATION",
+      "amount": 550,
+      "status": "SUCCESS",
+      "title": "Activation Licence VIP",
+      "description": "Paiement vérifié et validé avec succès par l’administrateur.",
+      "reference": "32a2c374-ac0c-4745-bb3c-c4e3e62d685c",
+      "createdAt": "2026-11-10T21:23:25.396Z",
+      "updatedAt": "2026-11-10T21:23:32.140Z"
+    }
+  ],
+  "aviatorHistory": [
+    {
+      "roundNumber": 153,
+      "crashPoint": 3.25,
+      "code15": "AV1515386030019",
+      "timestamp": "2026-11-13T02:26:59.660Z"
+    },
+    {
+      "roundNumber": 152,
+      "crashPoint": 4.99,
+      "code15": "AV1515238364958",
+      "timestamp": "2026-11-13T02:26:31.462Z"
+    },
+    {
+      "roundNumber": 151,
+      "crashPoint": 2.93,
+      "code15": "AV1515178195405",
+      "timestamp": "2026-11-13T02:26:01.501Z"
+    },
+    {
+      "roundNumber": 150,
+      "crashPoint": 2.61,
+      "code15": "AV1515094858469",
+      "timestamp": "2026-11-13T02:25:38.502Z"
+    },
+    {
+      "roundNumber": 149,
+      "crashPoint": 1.38,
+      "code15": "AV1514941201463",
+      "timestamp": "2026-11-13T02:25:16.701Z"
+    },
+    {
+      "roundNumber": 148,
+      "crashPoint": 1.82,
+      "code15": "AV1514839185253",
+      "timestamp": "2026-11-13T02:25:00.834Z"
+    },
+    {
+      "roundNumber": 147,
+      "crashPoint": 2.51,
+      "code15": "AV1514744234516",
+      "timestamp": "2026-11-13T02:24:42.552Z"
+    },
+    {
+      "roundNumber": 146,
+      "crashPoint": 9.15,
+      "code15": "AV1514618680213",
+      "timestamp": "2026-11-13T02:24:21.148Z"
+    },
+    {
+      "roundNumber": 145,
+      "crashPoint": 3.17,
+      "code15": "AV1514534232934",
+      "timestamp": "2026-11-13T02:23:40.257Z"
+    },
+    {
+      "roundNumber": 144,
+      "crashPoint": 1.4,
+      "code15": "AV1514448758223",
+      "timestamp": "2026-11-13T02:23:16.353Z"
+    },
+    {
+      "roundNumber": 143,
+      "crashPoint": 2.18,
+      "code15": "AV1514367589898",
+      "timestamp": "2026-11-13T02:23:00.360Z"
+    },
+    {
+      "roundNumber": 142,
+      "crashPoint": 2,
+      "code15": "AV1514288864996",
+      "timestamp": "2026-11-13T02:22:40.374Z"
+    },
+    {
+      "roundNumber": 141,
+      "crashPoint": 4.56,
+      "code15": "AV1514115801180",
+      "timestamp": "2026-11-13T02:22:21.287Z"
+    },
+    {
+      "roundNumber": 140,
+      "crashPoint": 34.2,
+      "code15": "AV1514061542530",
+      "timestamp": "2026-11-13T02:21:52.658Z"
+    },
+    {
+      "roundNumber": 139,
+      "crashPoint": 9.26,
+      "code15": "AV1513973504750",
+      "timestamp": "2026-11-13T02:20:29.679Z"
+    },
+    {
+      "roundNumber": 138,
+      "crashPoint": 1.78,
+      "code15": "AV1513812175602",
+      "timestamp": "2026-11-13T02:19:48.586Z"
+    },
+    {
+      "roundNumber": 137,
+      "crashPoint": 2.67,
+      "code15": "AV1513759474763",
+      "timestamp": "2026-11-13T02:19:30.459Z"
+    },
+    {
+      "roundNumber": 136,
+      "crashPoint": 2.57,
+      "code15": "AV1513616626224",
+      "timestamp": "2026-11-13T02:19:08.460Z"
+    },
+    {
+      "roundNumber": 135,
+      "crashPoint": 6.67,
+      "code15": "AV1513513508634",
+      "timestamp": "2026-11-13T02:18:46.858Z"
+    },
+    {
+      "roundNumber": 134,
+      "crashPoint": 9.07,
+      "code15": "AV1513498685205",
+      "timestamp": "2026-11-13T02:18:12.086Z"
+    },
+    {
+      "roundNumber": 133,
+      "crashPoint": 2.53,
+      "code15": "AV1513327336580",
+      "timestamp": "2026-11-13T02:17:31.367Z"
+    },
+    {
+      "roundNumber": 132,
+      "crashPoint": 5.96,
+      "code15": "AV1513289529067",
+      "timestamp": "2026-11-13T02:17:09.870Z"
+    },
+    {
+      "roundNumber": 131,
+      "crashPoint": 1.6,
+      "code15": "AV1513159724103",
+      "timestamp": "2026-11-13T02:13:10.051Z"
+    },
+    {
+      "roundNumber": 130,
+      "crashPoint": 8.39,
+      "code15": "AV1513018747812",
+      "timestamp": "2026-11-13T02:12:51.843Z"
+    },
+    {
+      "roundNumber": 129,
+      "crashPoint": 2.13,
+      "code15": "AV1512944437019",
+      "timestamp": "2026-11-13T02:12:03.696Z"
+    },
+    {
+      "roundNumber": 128,
+      "crashPoint": 3.79,
+      "code15": "AV1512821003620",
+      "timestamp": "2026-11-13T02:11:43.997Z"
+    },
+    {
+      "roundNumber": 127,
+      "crashPoint": 5.9,
+      "code15": "AV1512738890499",
+      "timestamp": "2026-11-13T02:11:17.882Z"
+    },
+    {
+      "roundNumber": 126,
+      "crashPoint": 2.21,
+      "code15": "AV1512632751429",
+      "timestamp": "2026-11-13T02:10:45.185Z"
+    },
+    {
+      "roundNumber": 125,
+      "crashPoint": 2.28,
+      "code15": "AV1512524842012",
+      "timestamp": "2026-11-13T02:10:17.467Z"
+    },
+    {
+      "roundNumber": 124,
+      "crashPoint": 4.76,
+      "code15": "AV1512487911716",
+      "timestamp": "2026-11-13T02:09:57.104Z"
+    },
+    {
+      "roundNumber": 123,
+      "crashPoint": 4.41,
+      "code15": "AV1512322483707",
+      "timestamp": "2026-11-13T02:09:27.753Z"
+    },
+    {
+      "roundNumber": 122,
+      "crashPoint": 2.28,
+      "code15": "AV1512261245624",
+      "timestamp": "2026-11-13T02:08:06.848Z"
+    },
+    {
+      "roundNumber": 121,
+      "crashPoint": 6.68,
+      "code15": "AV1512128389178",
+      "timestamp": "2026-11-13T02:07:46.453Z"
+    },
+    {
+      "roundNumber": 120,
+      "crashPoint": 4.9,
+      "code15": "AV1512040964715",
+      "timestamp": "2026-11-13T02:07:11.675Z"
+    },
+    {
+      "roundNumber": 119,
+      "crashPoint": 6.5,
+      "code15": "AV1511954051969",
+      "timestamp": "2026-11-13T02:06:41.940Z"
+    },
+    {
+      "roundNumber": 118,
+      "crashPoint": 1.78,
+      "code15": "AV1511873021718",
+      "timestamp": "2026-11-13T02:06:07.669Z"
+    },
+    {
+      "roundNumber": 117,
+      "crashPoint": 1.85,
+      "code15": "AV1511782080546",
+      "timestamp": "2026-11-13T02:05:49.570Z"
+    },
+    {
+      "roundNumber": 116,
+      "crashPoint": 1.82,
+      "code15": "AV1511655738539",
+      "timestamp": "2026-11-13T02:05:31.165Z"
+    },
+    {
+      "roundNumber": 115,
+      "crashPoint": 1.98,
+      "code15": "AV1511532627039",
+      "timestamp": "2026-11-13T02:05:12.879Z"
+    },
+    {
+      "roundNumber": 114,
+      "crashPoint": 2.88,
+      "code15": "AV1511471112254",
+      "timestamp": "2026-11-13T02:04:53.885Z"
     }
   ]
 }

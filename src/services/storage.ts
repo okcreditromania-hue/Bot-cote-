@@ -54,15 +54,14 @@ export const WEST_AFRICA_BOOKMAKERS: BookmakerPlatform[] = [
 ];
 
 export const WEST_AFRICA_COUNTRIES = [
-  { code: '+229', name: 'Bénin', flag: '🇧🇯' },
-  { code: '+225', name: 'Côte d\'Ivoire', flag: '🇨🇮' },
-  { code: '+221', name: 'Sénégal', flag: '🇸🇳' },
-  { code: '+223', name: 'Mali', flag: '🇲🇱' },
-  { code: '+226', name: 'Burkina Faso', flag: '🇧🇫' },
-  { code: '+228', name: 'Togo', flag: '🇹🇬' },
-  { code: '+237', name: 'Cameroun', flag: '🇨🇲' },
-  { code: '+224', name: 'Guinée', flag: '🇬🇳' },
-  { code: '+227', name: 'Niger', flag: '🇳🇪' },
+  { code: '+229', iso: 'BJ', name: 'Bénin', flag: '🇧🇯', currency: 'XOF' },
+  { code: '+226', iso: 'BF', name: 'Burkina Faso', flag: '🇧🇫', currency: 'XOF' },
+  { code: '+225', iso: 'CI', name: 'Côte d’Ivoire', flag: '🇨🇮', currency: 'XOF' },
+  { code: '+245', iso: 'GW', name: 'Guinée-Bissau', flag: '🇬🇼', currency: 'XOF' },
+  { code: '+223', iso: 'ML', name: 'Mali', flag: '🇲🇱', currency: 'XOF' },
+  { code: '+227', iso: 'NE', name: 'Niger', flag: '🇳🇪', currency: 'XOF' },
+  { code: '+221', iso: 'SN', name: 'Sénégal', flag: '🇸🇳', currency: 'XOF' },
+  { code: '+228', iso: 'TG', name: 'Togo', flag: '🇹🇬', currency: 'XOF' },
 ];
 
 const DEFAULT_VIP_PLANS: Record<'VIP1' | 'VIP2', VIPPlan> = {
@@ -132,52 +131,7 @@ const DEFAULT_ADMIN_SETTINGS: AdminSettings = {
   },
 };
 
-const INITIAL_DEMO_USERS: User[] = [
-  {
-    id: 'usr_001',
-    fullName: 'Moussa Traoré',
-    phone: '+2250708091011',
-    password: 'password123',
-    country: 'Côte d\'Ivoire',
-    bookmaker: '1xBet',
-    vipTier: 'VIP1',
-    paymentStatus: 'paid',
-    paymentReference: 'MOMO-CI-994821',
-    paymentMethod: 'ORANGE',
-    amountPaid: 550,
-    paymentDate: '2026-11-10 11:20',
-    registeredAt: '2026-11-10 11:15',
-    notes: 'Paiement automatique validé via Orange Money',
-  },
-  {
-    id: 'usr_002',
-    fullName: 'Koffi Mensah',
-    phone: '+22997123456',
-    password: 'password123',
-    country: 'Bénin',
-    bookmaker: 'Paripesa',
-    vipTier: 'VIP1',
-    paymentStatus: 'paid',
-    paymentReference: 'MOMO-BJ-381029',
-    paymentMethod: 'MTN',
-    amountPaid: 550,
-    paymentDate: '2026-11-10 13:40',
-    registeredAt: '2026-11-10 13:30',
-    notes: 'Accès Bot débloqué',
-  },
-  {
-    id: 'usr_003',
-    fullName: 'Abdoulaye Diallo',
-    phone: '+221776543210',
-    password: 'password123',
-    country: 'Sénégal',
-    bookmaker: 'Premier Bet',
-    vipTier: 'VIP2',
-    paymentStatus: 'unpaid',
-    registeredAt: '2026-11-10 15:02',
-    notes: 'Place réservée - En attente de paiement 1 500 F',
-  },
-];
+const INITIAL_DEMO_USERS: User[] = [];
 
 export const INITIAL_SIGNALS: LiveSignal[] = [
   {
