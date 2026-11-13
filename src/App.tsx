@@ -7,20 +7,12 @@ import { ClientAccount } from './components/ClientAccount';
 import { AuthPage } from './components/AuthPage';
 import { LogoutPage } from './components/LogoutPage';
 import { AdminDashboard } from './components/AdminDashboard';
+import { AdminLoginGate } from './components/AdminLoginGate';
 import { Footer } from './components/Footer';
 import { SupportChatWidget } from './components/SupportChatWidget';
-import { useFirebase } from './firebase/FirebaseContext';
 
 export default function App() {
-  const { isFirebaseAdmin, firebaseUser, signOutFirebase } = useFirebase();
-
   const [currentUser, setCurrentUser] = useState<User | null>(() => StorageService.getCurrentUser());
-  const [authInitialTab, setAuthInitialTab] = useState<'login' | 'register'>(() => {
-    if (typeof window !== 'undefined' && window.location.hash === '#admin') {
-      return 'login';
-    }
-    return 'register';
-  });
 
   const [currentView, setCurrentView] = useState<'auth' | 'client' | 'admin' | 'logout'>(() => {
     if (typeof window !== 'undefined' && window.location.hash === '#admin') {
@@ -32,17 +24,10 @@ export default function App() {
   const [isAdminAuthenticated, setIsAdminAuthenticated] = useState<boolean>(() => {
     return localStorage.getItem('saspay_admin_auth') === 'authenticated_34343434';
   });
+  const [isAdminLoginGateOpen, setIsAdminLoginGateOpen] = useState(false);
 
   const [transactions, setTransactions] = useState<TransactionRecord[]>([]);
   const [stats, setStats] = useState<DashboardStats | null>(null);
-
-  useEffect(() => {
-    if (isFirebaseAdmin && !isAdminAuthenticated) {
-      localStorage.setItem('saspay_admin_auth', 'authenticated_34343434');
-      localStorage.setItem('saspay_admin_user', firebaseUser?.email || 'okcreditromania@gmail.com');
-      setIsAdminAuthenticated(true);
-    }
-  }, [isFirebaseAdmin, isAdminAuthenticated, firebaseUser]);
 
   useEffect(() => {
     const handleHash = () => {
@@ -50,11 +35,9 @@ export default function App() {
         if (isAdminAuthenticated) {
           setCurrentView('admin');
         } else {
-          setAuthInitialTab('login');
-          setCurrentView('auth');
+          setIsAdminLoginGateOpen(true);
         }
       } else if (window.location.hash === '#auth' || window.location.hash === '#inscription') {
-        setAuthInitialTab('register');
         setCurrentView('auth');
       }
     };
@@ -65,8 +48,7 @@ export default function App() {
         if (isAdminAuthenticated) {
           setCurrentView('admin');
         } else {
-          setAuthInitialTab('login');
-          setCurrentView('auth');
+          setIsAdminLoginGateOpen(true);
         }
       }
     };
@@ -112,17 +94,13 @@ export default function App() {
     setCurrentView('client');
   };
 
-  const handleClientLogout = async () => {
+  const handleClientLogout = () => {
     StorageService.setCurrentUser(null);
     setCurrentUser(null);
-    if (firebaseUser) {
-      await signOutFirebase().catch(() => {});
-    }
     setCurrentView('logout');
   };
 
   const handleRedirectToAuth = () => {
-    setAuthInitialTab('login');
     setCurrentView('auth');
   };
 
@@ -132,6 +110,14 @@ export default function App() {
     fetchTransactionsAndStats();
   };
 
+  const handleOpenAdminGate = () => {
+    if (isAdminAuthenticated) {
+      setCurrentView('admin');
+    } else {
+      setIsAdminLoginGateOpen(true);
+    }
+  };
+
   const handleAdminLoginSuccess = () => {
     setIsAdminAuthenticated(true);
     setCurrentView('admin');
@@ -139,14 +125,10 @@ export default function App() {
     fetchTransactionsAndStats();
   };
 
-  const handleAdminLogout = async () => {
+  const handleAdminLogout = () => {
     localStorage.removeItem('saspay_admin_auth');
     localStorage.removeItem('saspay_admin_user');
     setIsAdminAuthenticated(false);
-    if (firebaseUser) {
-      await signOutFirebase().catch(() => {});
-    }
-    setAuthInitialTab('login');
     setCurrentView('auth');
     if (window.location.hash === '#admin') {
       window.location.hash = '';
@@ -165,8 +147,7 @@ export default function App() {
           currentView={currentView}
           onNavigate={(view) => {
             if (view === 'admin' && !isAdminAuthenticated) {
-              setAuthInitialTab('login');
-              setCurrentView('auth');
+              setIsAdminLoginGateOpen(true);
             } else {
               setCurrentView(view);
             }
@@ -180,7 +161,7 @@ export default function App() {
             <div>
               <div className="bg-slate-900 border-b border-slate-800 px-3 py-2 text-[11px] text-white flex items-center justify-between">
                 <span className="font-mono text-slate-200">
-                  Admin : <strong>{firebaseUser?.email || '34343434'}</strong>
+                  Admin : <strong>34343434</strong>
                 </span>
                 <button
                   onClick={handleAdminLogout}
@@ -205,7 +186,7 @@ export default function App() {
             />
           ) : (
             <AuthPage
-              initialTab={authInitialTab}
+              initialTab="register"
               onAuthSuccess={handleAuthSuccess}
               onAdminLoginSuccess={handleAdminLoginSuccess}
             />
@@ -213,16 +194,15 @@ export default function App() {
         </main>
 
         {/* Hide footer when mobile bottom navigation is active to keep viewport uncluttered */}
-        {!hasBottomNav && (
-          <Footer
-            onGoToLogin={() => {
-              setAuthInitialTab('login');
-              setCurrentView('auth');
-            }}
-          />
-        )}
+        {!hasBottomNav && <Footer onOpenAdminGate={handleOpenAdminGate} />}
 
         <SupportChatWidget currentUser={currentUser} hasBottomNav={hasBottomNav} />
+
+        <AdminLoginGate
+          isOpen={isAdminLoginGateOpen}
+          onClose={() => setIsAdminLoginGateOpen(false)}
+          onLoginSuccess={handleAdminLoginSuccess}
+        />
       </div>
     </div>
   );

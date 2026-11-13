@@ -1,8 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { AviatorGameState, User } from '../types';
 import { aviatorSound } from '../utils/aviatorSound';
-import { auth } from '../firebase/config';
-import { upsertOperationToFirestore } from '../firebase/firestoreService';
 import {
   Volume2,
   VolumeX,
@@ -104,25 +102,6 @@ export const AviatorGameDashboard: React.FC<AviatorGameDashboardProps> = ({
       if (res.ok && data.success) {
         aviatorSound.playCashoutWin();
         if (data.user) onUserUpdated(data.user);
-        if (auth.currentUser) {
-          const nowIso = new Date().toISOString();
-          upsertOperationToFirestore(
-            {
-              id: `op_win_${Date.now()}`,
-              userId: auth.currentUser.uid,
-              firebaseUid: auth.currentUser.uid,
-              userPhone: user.phone,
-              type: 'WIN',
-              amount: Number(data.winAmount) || 0,
-              status: 'SUCCESS',
-              title: `Gain Aviator ${Number(data.cashoutMultiplier).toFixed(2)}x`,
-              description: `Cashout à ${Number(data.cashoutMultiplier).toFixed(2)}x`,
-              createdAt: nowIso,
-              updatedAt: nowIso,
-            },
-            { firebaseUid: auth.currentUser.uid }
-          ).catch(() => {});
-        }
         setActionFeedback({
           type: 'success',
           text: `Encaissé : +${Number(data.winAmount).toLocaleString('fr-FR')} FCFA à ${Number(data.cashoutMultiplier).toFixed(2)}x !`,
@@ -621,25 +600,6 @@ export const AviatorGameDashboard: React.FC<AviatorGameDashboardProps> = ({
       const data = await res.json();
       if (res.ok && data.success) {
         if (data.user) onUserUpdated(data.user);
-        if (auth.currentUser) {
-          const nowIso = new Date().toISOString();
-          upsertOperationToFirestore(
-            {
-              id: `op_bet_${Date.now()}`,
-              userId: auth.currentUser.uid,
-              firebaseUid: auth.currentUser.uid,
-              userPhone: user.phone,
-              type: 'BET',
-              amount,
-              status: 'SUCCESS',
-              title: 'Mise Aviator',
-              description: `Mise engagée sur le vol (${amount.toLocaleString('fr-FR')} XOF)`,
-              createdAt: nowIso,
-              updatedAt: nowIso,
-            },
-            { firebaseUid: auth.currentUser.uid }
-          ).catch(() => {});
-        }
         setActionFeedback({
           type: 'success',
           text: `Mise de ${amount.toLocaleString('fr-FR')} FCFA validée pour le vol.`,

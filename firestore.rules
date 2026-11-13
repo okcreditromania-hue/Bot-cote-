@@ -2,12 +2,11 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Global Safety Net (Default Deny)
+    // Default deny all
     match /{document=**} {
       allow read, write: if false;
     }
 
-    // Core Security Primitives
     function isValidId(id) {
       return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
     }
@@ -24,384 +23,44 @@ service cloud.firestore {
       return request.auth != null;
     }
 
-    function isVerifiedUser() {
-      return isSignedIn() && request.auth.token.email_verified == true;
-    }
-
-    function isAdminEmail() {
-      return isVerifiedUser() && request.auth.token.email == 'okcreditromania@gmail.com';
-    }
-
     function isAdmin() {
-      return isAdminEmail() || (isVerifiedUser() && exists(/databases/$(database)/documents/admins/$(request.auth.uid)));
+      return isSignedIn() && (
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid)) ||
+        request.auth.token.email == 'okcreditromania@gmail.com'
+      );
     }
 
-    // Entity Validation Blueprints
-    function isValidAdminRecord(data) {
-      return data.keys().hasAll(['uid', 'email', 'role', 'createdAt', 'updatedAt']) &&
-        data.keys().hasOnly(['uid', 'email', 'role', 'createdAt', 'updatedAt']) &&
-        isValidId(data.uid) &&
-        data.email is string && data.email.size() > 3 && data.email.size() <= 160 &&
-        data.role == 'admin' &&
-        data.createdAt is timestamp &&
-        data.updatedAt is timestamp;
-    }
-
-    function isValidUser(data) {
-      return data.keys().hasAll([
-          'id', 'firebaseUid', 'fullName', 'phone', 'country',
-          'bookmaker', 'vipTier', 'paymentStatus', 'balance',
-          'createdAt', 'updatedAt'
-        ]) &&
-        data.keys().hasOnly([
-          'id', 'firebaseUid', 'email', 'fullName', 'phone', 'country',
-          'bookmaker', 'bookmakerUserId', 'vipTier', 'paymentStatus', 'balance',
-          'amountPaid', 'paymentReference', 'paymentMethod', 'paymentDate',
-          'registeredAt', 'notes', 'createdAt', 'updatedAt'
-        ]) &&
-        isValidId(data.id) &&
-        data.firebaseUid is string && data.firebaseUid.size() <= 128 && data.firebaseUid.matches('^[a-zA-Z0-9_\\-]*$') &&
-        (!('email' in data) || (data.email is string && data.email.size() <= 160)) &&
-        data.fullName is string && data.fullName.size() >= 1 && data.fullName.size() <= 120 &&
-        data.phone is string && data.phone.size() >= 3 && data.phone.size() <= 30 &&
-        data.country is string && data.country.size() >= 2 && data.country.size() <= 50 &&
-        data.bookmaker is string && data.bookmaker.size() >= 2 && data.bookmaker.size() <= 50 &&
-        (!('bookmakerUserId' in data) || (data.bookmakerUserId is string && data.bookmakerUserId.size() <= 80)) &&
-        data.vipTier in ['VIP1', 'VIP2'] &&
-        data.paymentStatus in ['unpaid', 'pending', 'paid'] &&
-        data.balance is number && data.balance >= 0 && data.balance <= 100000000 &&
-        (!('amountPaid' in data) || (data.amountPaid is number && data.amountPaid >= 0 && data.amountPaid <= 100000000)) &&
-        (!('paymentReference' in data) || (data.paymentReference is string && data.paymentReference.size() <= 128)) &&
-        (!('paymentMethod' in data) || (data.paymentMethod is string && data.paymentMethod.size() <= 50)) &&
-        (!('paymentDate' in data) || (data.paymentDate is string && data.paymentDate.size() <= 60)) &&
-        (!('registeredAt' in data) || (data.registeredAt is string && data.registeredAt.size() <= 60)) &&
-        (!('notes' in data) || (data.notes is string && data.notes.size() <= 500)) &&
-        data.createdAt is timestamp &&
-        data.updatedAt is timestamp;
-    }
-
-    function isValidTransaction(data) {
-      return data.keys().hasAll([
-          'id', 'userId', 'firebaseUid', 'amount', 'currency', 'country',
-          'network', 'phone', 'customerName', 'status', 'createdAt', 'updatedAt'
-        ]) &&
-        data.keys().hasOnly([
-          'id', 'userId', 'firebaseUid', 'saspayPaymentId', 'transactionType',
-          'amount', 'currency', 'country', 'countryName', 'network',
-          'operatorName', 'phone', 'customerName', 'bookmakerUserId',
-          'vipTier', 'status', 'statusMessage', 'description',
-          'createdAt', 'updatedAt'
-        ]) &&
-        isValidId(data.id) &&
-        isValidId(data.userId) &&
-        data.firebaseUid is string && data.firebaseUid.size() <= 128 && data.firebaseUid.matches('^[a-zA-Z0-9_\\-]*$') &&
-        (!('saspayPaymentId' in data) || (data.saspayPaymentId is string && data.saspayPaymentId.size() <= 128)) &&
-        (!('transactionType' in data) || data.transactionType in ['VIP_ACTIVATION', 'RECHARGE', 'WITHDRAWAL']) &&
-        data.amount is number && data.amount > 0 && data.amount <= 100000000 &&
-        data.currency is string && data.currency.size() >= 2 && data.currency.size() <= 10 &&
-        data.country is string && data.country.size() >= 2 && data.country.size() <= 10 &&
-        (!('countryName' in data) || (data.countryName is string && data.countryName.size() <= 50)) &&
-        data.network is string && data.network.size() >= 2 && data.network.size() <= 50 &&
-        (!('operatorName' in data) || (data.operatorName is string && data.operatorName.size() <= 80)) &&
-        data.phone is string && data.phone.size() >= 4 && data.phone.size() <= 30 &&
-        data.customerName is string && data.customerName.size() >= 2 && data.customerName.size() <= 120 &&
-        (!('bookmakerUserId' in data) || (data.bookmakerUserId is string && data.bookmakerUserId.size() <= 80)) &&
-        (!('vipTier' in data) || (data.vipTier is string && data.vipTier.size() <= 20)) &&
-        data.status in ['PENDING', 'SUCCESS', 'FAILED'] &&
-        (!('statusMessage' in data) || (data.statusMessage is string && data.statusMessage.size() <= 500)) &&
-        (!('description' in data) || (data.description is string && data.description.size() <= 500)) &&
-        data.createdAt is timestamp &&
-        data.updatedAt is timestamp;
-    }
-
-    function isValidOperation(data) {
-      return data.keys().hasAll([
-          'id', 'userId', 'firebaseUid', 'userPhone', 'type',
-          'amount', 'status', 'title', 'description', 'createdAt', 'updatedAt'
-        ]) &&
-        data.keys().hasOnly([
-          'id', 'userId', 'firebaseUid', 'userPhone', 'type',
-          'amount', 'status', 'title', 'description', 'reference',
-          'createdAt', 'updatedAt'
-        ]) &&
-        isValidId(data.id) &&
-        isValidId(data.userId) &&
-        data.firebaseUid is string && data.firebaseUid.size() <= 128 && data.firebaseUid.matches('^[a-zA-Z0-9_\\-]*$') &&
-        data.userPhone is string && data.userPhone.size() <= 30 &&
-        data.type in ['VIP_ACTIVATION', 'RECHARGE', 'WITHDRAWAL', 'BET', 'WIN'] &&
-        data.amount is number && data.amount >= 0 && data.amount <= 100000000 &&
-        data.status in ['PENDING', 'SUCCESS', 'FAILED'] &&
-        data.title is string && data.title.size() >= 1 && data.title.size() <= 140 &&
-        data.description is string && data.description.size() <= 500 &&
-        (!('reference' in data) || (data.reference is string && data.reference.size() <= 128)) &&
-        data.createdAt is timestamp &&
-        data.updatedAt is timestamp;
-    }
-
-    function isValidSupportConversation(data) {
-      return data.keys().hasAll([
-          'userId', 'firebaseUid', 'userName', 'lastMessageAt',
-          'unreadCountClient', 'unreadCountAdmin', 'createdAt', 'updatedAt'
-        ]) &&
-        data.keys().hasOnly([
-          'userId', 'firebaseUid', 'userName', 'userPhone', 'userCountry',
-          'lastMessageAt', 'unreadCountClient', 'unreadCountAdmin',
-          'createdAt', 'updatedAt'
-        ]) &&
-        isValidId(data.userId) &&
-        data.firebaseUid is string && data.firebaseUid.size() <= 128 && data.firebaseUid.matches('^[a-zA-Z0-9_\\-]*$') &&
-        data.userName is string && data.userName.size() >= 1 && data.userName.size() <= 120 &&
-        (!('userPhone' in data) || (data.userPhone is string && data.userPhone.size() <= 30)) &&
-        (!('userCountry' in data) || (data.userCountry is string && data.userCountry.size() <= 50)) &&
-        data.lastMessageAt is string && data.lastMessageAt.size() <= 60 &&
-        data.unreadCountClient is number && data.unreadCountClient >= 0 && data.unreadCountClient <= 10000 &&
-        data.unreadCountAdmin is number && data.unreadCountAdmin >= 0 && data.unreadCountAdmin <= 10000 &&
-        data.createdAt is timestamp &&
-        data.updatedAt is timestamp;
-    }
-
-    function isValidSupportMessage(data) {
-      return data.keys().hasAll([
-          'id', 'conversationId', 'firebaseUid', 'sender',
-          'text', 'read', 'createdAt', 'updatedAt'
-        ]) &&
-        data.keys().hasOnly([
-          'id', 'conversationId', 'firebaseUid', 'sender',
-          'text', 'timestamp', 'read', 'createdAt', 'updatedAt'
-        ]) &&
-        isValidId(data.id) &&
-        isValidId(data.conversationId) &&
-        data.firebaseUid is string && data.firebaseUid.size() <= 128 && data.firebaseUid.matches('^[a-zA-Z0-9_\\-]*$') &&
-        data.sender in ['client', 'admin'] &&
-        data.text is string && data.text.size() >= 1 && data.text.size() <= 2000 &&
-        (!('timestamp' in data) || (data.timestamp is string && data.timestamp.size() <= 60)) &&
-        data.read is bool &&
-        data.createdAt is timestamp &&
-        data.updatedAt is timestamp;
-    }
-
-    function isValidAviatorRound(data) {
-      return data.keys().hasAll([
-          'id', 'roundNumber', 'crashPoint', 'code15', 'timestamp', 'createdAt', 'updatedAt'
-        ]) &&
-        data.keys().hasOnly([
-          'id', 'roundNumber', 'crashPoint', 'code15', 'timestamp', 'createdAt', 'updatedAt'
-        ]) &&
-        isValidId(data.id) &&
-        data.roundNumber is number && data.roundNumber >= 1 && data.roundNumber <= 100000000 &&
-        data.crashPoint is number && data.crashPoint >= 1 && data.crashPoint <= 10000 &&
-        data.code15 is string && data.code15.size() >= 6 && data.code15.size() <= 32 &&
-        data.timestamp is string && data.timestamp.size() <= 60 &&
-        data.createdAt is timestamp &&
-        data.updatedAt is timestamp;
-    }
-
-    // Admins Collection
-    match /admins/{adminId} {
-      allow get: if isValidId(adminId) && (isAdmin() || (isAdminEmail() && adminId == request.auth.uid));
-      allow list: if false;
-      allow create: if isVerifiedUser() &&
-        isValidId(adminId) &&
-        isValidAdminRecord(incoming()) &&
-        incoming().createdAt == request.time &&
-        incoming().updatedAt == request.time &&
-        ((isAdminEmail() && adminId == request.auth.uid && incoming().uid == request.auth.uid && incoming().email == request.auth.token.email) || isAdmin());
-      allow update: if isVerifiedUser() &&
-        isValidId(adminId) &&
-        isValidAdminRecord(incoming()) &&
-        incoming().uid == existing().uid &&
-        incoming().createdAt == existing().createdAt &&
-        incoming().updatedAt == request.time &&
-        isAdmin();
-      allow delete: if isValidId(adminId) && isAdmin();
-    }
-
-    // Users Collection (PII isolated to owner & admin)
+    // Users collection
     match /users/{userId} {
-      allow get: if isValidId(userId) && isVerifiedUser() &&
-        (existing().firebaseUid == request.auth.uid || userId == request.auth.uid || isAdmin());
-      allow list: if isVerifiedUser() &&
-        (resource.data.firebaseUid == request.auth.uid || isAdminEmail());
-      allow create: if isVerifiedUser() &&
-        isValidId(userId) &&
-        isValidUser(incoming()) &&
-        incoming().createdAt == request.time &&
-        incoming().updatedAt == request.time &&
-        (
-          isAdmin() ||
-          (userId == request.auth.uid && incoming().firebaseUid == request.auth.uid && incoming().paymentStatus == 'unpaid' && incoming().balance == 0)
-        );
-      allow update: if isVerifiedUser() &&
-        isValidId(userId) &&
-        isValidUser(incoming()) &&
-        incoming().id == existing().id &&
-        incoming().createdAt == existing().createdAt &&
-        incoming().updatedAt == request.time &&
-        (
-          isAdmin() ||
-          (
-            existing().firebaseUid == request.auth.uid &&
-            incoming().firebaseUid == existing().firebaseUid &&
-            incoming().paymentStatus == existing().paymentStatus &&
-            incoming().balance == existing().balance &&
-            incoming().diff(existing()).affectedKeys().hasOnly(['fullName', 'phone', 'country', 'bookmaker', 'bookmakerUserId', 'vipTier', 'email', 'notes', 'updatedAt'])
-          )
-        );
-      allow delete: if isValidId(userId) && isAdmin();
+      allow read: if isValidId(userId);
+      allow create: if isValidId(userId) &&
+        incoming().fullName is string && incoming().fullName.size() <= 120 &&
+        incoming().phone is string && incoming().phone.size() <= 30;
+      allow update: if isValidId(userId);
+      allow delete: if isAdmin();
     }
 
-    // Transactions Collection
+    // Transactions collection
     match /transactions/{transactionId} {
-      allow get: if isValidId(transactionId) && isVerifiedUser() &&
-        (existing().firebaseUid == request.auth.uid || isAdmin());
-      allow list: if isVerifiedUser() &&
-        (resource.data.firebaseUid == request.auth.uid || isAdminEmail());
-      allow create: if isVerifiedUser() &&
-        isValidId(transactionId) &&
-        isValidTransaction(incoming()) &&
-        incoming().createdAt == request.time &&
-        incoming().updatedAt == request.time &&
-        (
-          isAdmin() ||
-          (
-            incoming().firebaseUid == request.auth.uid &&
-            incoming().status == 'PENDING' &&
-            exists(/databases/$(database)/documents/users/$(incoming().userId))
-          )
-        );
-      allow update: if isVerifiedUser() &&
-        isValidId(transactionId) &&
-        isValidTransaction(incoming()) &&
-        incoming().id == existing().id &&
-        incoming().userId == existing().userId &&
-        incoming().createdAt == existing().createdAt &&
-        incoming().updatedAt == request.time &&
-        isAdmin();
-      allow delete: if isValidId(transactionId) && isAdmin();
+      allow read: if isValidId(transactionId);
+      allow create: if isValidId(transactionId) &&
+        incoming().amount is number && incoming().amount > 0 &&
+        incoming().phone is string && incoming().phone.size() <= 30;
+      allow update: if isValidId(transactionId);
+      allow delete: if isAdmin();
     }
 
-    // Client Operations Collection
-    match /operations/{operationId} {
-      allow get: if isValidId(operationId) && isVerifiedUser() &&
-        (existing().firebaseUid == request.auth.uid || isAdmin());
-      allow list: if isVerifiedUser() &&
-        (resource.data.firebaseUid == request.auth.uid || isAdminEmail());
-      allow create: if isVerifiedUser() &&
-        isValidId(operationId) &&
-        isValidOperation(incoming()) &&
-        incoming().createdAt == request.time &&
-        incoming().updatedAt == request.time &&
-        (
-          isAdmin() ||
-          (
-            incoming().firebaseUid == request.auth.uid &&
-            exists(/databases/$(database)/documents/users/$(incoming().userId)) &&
-            (
-              (incoming().type in ['VIP_ACTIVATION', 'RECHARGE', 'WITHDRAWAL'] && incoming().status == 'PENDING') ||
-              (incoming().type in ['BET', 'WIN'] && incoming().status in ['SUCCESS', 'FAILED'])
-            )
-          )
-        );
-      allow update: if isVerifiedUser() &&
-        isValidId(operationId) &&
-        isValidOperation(incoming()) &&
-        incoming().id == existing().id &&
-        incoming().userId == existing().userId &&
-        incoming().createdAt == existing().createdAt &&
-        incoming().updatedAt == request.time &&
-        isAdmin();
-      allow delete: if isValidId(operationId) && isAdmin();
-    }
-
-    // Support Conversations & Subcollection Messages
+    // Support Conversations collection
     match /supportConversations/{conversationId} {
-      allow get: if isValidId(conversationId) && isVerifiedUser() &&
-        (existing().firebaseUid == request.auth.uid || conversationId == request.auth.uid || isAdmin());
-      allow list: if isVerifiedUser() &&
-        (resource.data.firebaseUid == request.auth.uid || isAdminEmail());
-      allow create: if isVerifiedUser() &&
-        isValidId(conversationId) &&
-        isValidSupportConversation(incoming()) &&
-        incoming().createdAt == request.time &&
-        incoming().updatedAt == request.time &&
-        (
-          isAdmin() ||
-          (incoming().firebaseUid == request.auth.uid && conversationId == request.auth.uid)
-        );
-      allow update: if isVerifiedUser() &&
-        isValidId(conversationId) &&
-        isValidSupportConversation(incoming()) &&
-        incoming().userId == existing().userId &&
-        incoming().createdAt == existing().createdAt &&
-        incoming().updatedAt == request.time &&
-        (
-          isAdmin() ||
-          (
-            existing().firebaseUid == request.auth.uid &&
-            incoming().firebaseUid == existing().firebaseUid &&
-            incoming().diff(existing()).affectedKeys().hasOnly(['lastMessageAt', 'unreadCountClient', 'unreadCountAdmin', 'updatedAt'])
-          )
-        );
-      allow delete: if isValidId(conversationId) && isAdmin();
+      allow read: if isValidId(conversationId);
+      allow create, update: if isValidId(conversationId);
+      allow delete: if isAdmin();
 
       match /messages/{messageId} {
-        allow get: if isValidId(conversationId) && isValidId(messageId) && isVerifiedUser() &&
-          (get(/databases/$(database)/documents/supportConversations/$(conversationId)).data.firebaseUid == request.auth.uid || isAdmin());
-        allow list: if isVerifiedUser() &&
-          (resource.data.firebaseUid == request.auth.uid || isAdminEmail());
-        allow create: if isVerifiedUser() &&
-          isValidId(conversationId) &&
-          isValidId(messageId) &&
-          isValidSupportMessage(incoming()) &&
-          incoming().conversationId == conversationId &&
-          incoming().createdAt == request.time &&
-          incoming().updatedAt == request.time &&
-          exists(/databases/$(database)/documents/supportConversations/$(conversationId)) &&
-          (
-            isAdmin() ||
-            (
-              get(/databases/$(database)/documents/supportConversations/$(conversationId)).data.firebaseUid == request.auth.uid &&
-              incoming().firebaseUid == request.auth.uid &&
-              incoming().sender == 'client'
-            )
-          );
-        allow update: if isVerifiedUser() &&
-          isValidId(conversationId) &&
-          isValidId(messageId) &&
-          isValidSupportMessage(incoming()) &&
-          incoming().id == existing().id &&
-          incoming().conversationId == existing().conversationId &&
-          incoming().createdAt == existing().createdAt &&
-          incoming().updatedAt == request.time &&
-          (
-            isAdmin() ||
-            (
-              get(/databases/$(database)/documents/supportConversations/$(conversationId)).data.firebaseUid == request.auth.uid &&
-              incoming().diff(existing()).affectedKeys().hasOnly(['read', 'updatedAt'])
-            )
-          );
-        allow delete: if isValidId(conversationId) && isValidId(messageId) && isAdmin();
+        allow read: if isValidId(messageId);
+        allow create, update: if isValidId(messageId);
+        allow delete: if isAdmin();
       }
-    }
-
-    // Aviator Round History Collection
-    match /aviatorHistory/{roundId} {
-      allow get: if isValidId(roundId) && isVerifiedUser();
-      allow list: if isVerifiedUser() && resource.data.roundNumber is number;
-      allow create: if isVerifiedUser() &&
-        isValidId(roundId) &&
-        isValidAviatorRound(incoming()) &&
-        incoming().createdAt == request.time &&
-        incoming().updatedAt == request.time &&
-        isAdmin();
-      allow update: if isVerifiedUser() &&
-        isValidId(roundId) &&
-        isValidAviatorRound(incoming()) &&
-        incoming().id == existing().id &&
-        incoming().createdAt == existing().createdAt &&
-        incoming().updatedAt == request.time &&
-        isAdmin();
-      allow delete: if isValidId(roundId) && isAdmin();
     }
   }
 }

@@ -9,12 +9,6 @@ import { CountryCode, CountryInfo, Operator, TransactionRecord } from '../types/
 import { SUPPORTED_COUNTRIES, COUNTRIES_LIST, resolveCountryCode } from '../data/countries';
 import { ClientVideoSection } from './ClientVideoSection';
 import { AviatorGameDashboard } from './AviatorGameDashboard';
-import { useFirebase } from '../firebase/FirebaseContext';
-import {
-  subscribeClientFirestore,
-  upsertTransactionToFirestore,
-  upsertOperationToFirestore,
-} from '../firebase/firestoreService';
 import {
   Lock,
   ShieldCheck,
@@ -104,30 +98,6 @@ export const ClientAccount: React.FC<ClientAccountProps> = ({
 
   const userRef = useRef(user);
   userRef.current = user;
-
-  const { firebaseUser, signInWithGooglePopup, syncClientWithFirestore } = useFirebase();
-  const [isLinkingCloud, setIsLinkingCloud] = useState(false);
-
-  const handleLinkCloudAccount = async () => {
-    setIsLinkingCloud(true);
-    try {
-      const fbUser = await signInWithGooglePopup();
-      if (fbUser) {
-        const synced = await syncClientWithFirestore(userRef.current);
-        if (synced?.user) {
-          onPaymentSuccess(synced.user);
-          setLiveAlert({
-            type: 'success',
-            message: 'Compte synchronisé avec Firebase Cloud Firestore sur tous vos appareils.',
-          });
-        }
-      }
-    } catch {
-      // ignore cancelled popup
-    } finally {
-      setIsLinkingCloud(false);
-    }
-  };
 
   // Keep bookmaker ID and payer name synced cleanly if updated from server
   useEffect(() => {
@@ -287,58 +257,6 @@ export const ClientAccount: React.FC<ClientAccountProps> = ({
     };
   }, [user.id, user.phone, performSync, onPaymentSuccess]);
 
-  // Real-time Firestore cross-device listener when Firebase Auth is active
-  useEffect(() => {
-    if (!firebaseUser || !firebaseUser.emailVerified) return;
-    const unsub = subscribeClientFirestore(firebaseUser.uid, {
-      onUserChange: (cloudUser) => {
-        const prev = userRef.current;
-        if (
-          cloudUser.paymentStatus !== prev.paymentStatus ||
-          (cloudUser.balance ?? 0) !== (prev.balance ?? 0) ||
-          cloudUser.vipTier !== prev.vipTier
-        ) {
-          const merged: User = {
-            ...prev,
-            ...cloudUser,
-            id: prev.id,
-            paymentStatus:
-              prev.paymentStatus === 'paid' || cloudUser.paymentStatus === 'paid'
-                ? 'paid'
-                : cloudUser.paymentStatus,
-            balance: Math.max(prev.balance ?? 0, cloudUser.balance ?? 0),
-          };
-          onPaymentSuccess(merged);
-        }
-      },
-      onTransactionsChange: (cloudTxs) => {
-        if (cloudTxs.length > 0) {
-          setClientTransactions((prev) => {
-            const map = new Map<string, TransactionRecord>();
-            for (const t of prev) map.set(t.id, t);
-            for (const ct of cloudTxs) map.set(ct.id, ct);
-            return Array.from(map.values()).sort((a, b) =>
-              (b.createdAt || '').localeCompare(a.createdAt || '')
-            );
-          });
-        }
-      },
-      onOperationsChange: (cloudOps) => {
-        if (cloudOps.length > 0) {
-          setClientOperations((prev) => {
-            const map = new Map<string, ClientOperation>();
-            for (const o of prev) map.set(o.id, o);
-            for (const co of cloudOps) map.set(co.id, co);
-            return Array.from(map.values()).sort((a, b) =>
-              (b.createdAt || '').localeCompare(a.createdAt || '')
-            );
-          });
-        }
-      },
-    });
-    return () => unsub();
-  }, [firebaseUser, onPaymentSuccess]);
-
   // Launch VIP Activation Payment (Mandatory full name + phone, strict userId binding)
   const handleLaunchVipPayment = async () => {
     setPaymentError('');
@@ -399,29 +317,6 @@ export const ClientAccount: React.FC<ClientAccountProps> = ({
       if (response.ok && data.success) {
         if (data.user && data.user.id === user.id) {
           onPaymentSuccess(data.user);
-        }
-        if (firebaseUser && data.transaction) {
-          upsertTransactionToFirestore(
-            { ...data.transaction, userId: firebaseUser.uid },
-            { firebaseUid: firebaseUser.uid }
-          ).catch(() => {});
-          upsertOperationToFirestore(
-            {
-              id: `op_${data.transaction.id}`,
-              userId: firebaseUser.uid,
-              firebaseUid: firebaseUser.uid,
-              userPhone: phone,
-              type: 'VIP_ACTIVATION',
-              amount: currentAmount,
-              status: 'PENDING',
-              title: 'Activation Licence VIP',
-              description: data.transaction.description || 'Paiement VIP en attente',
-              reference: data.transaction.id,
-              createdAt: data.transaction.createdAt,
-              updatedAt: data.transaction.updatedAt,
-            },
-            { firebaseUid: firebaseUser.uid }
-          ).catch(() => {});
         }
         setCurrentTransaction(data.transaction);
         setIsWaitingAdminApproval(true);
@@ -516,29 +411,6 @@ export const ClientAccount: React.FC<ClientAccountProps> = ({
         if (data.user && data.user.id === user.id) {
           onPaymentSuccess(data.user);
         }
-        if (firebaseUser && data.transaction) {
-          upsertTransactionToFirestore(
-            { ...data.transaction, userId: firebaseUser.uid },
-            { firebaseUid: firebaseUser.uid }
-          ).catch(() => {});
-          upsertOperationToFirestore(
-            {
-              id: `op_${data.transaction.id}`,
-              userId: firebaseUser.uid,
-              firebaseUid: firebaseUser.uid,
-              userPhone: rechargePhone,
-              type: 'RECHARGE',
-              amount: amountNum,
-              status: 'PENDING',
-              title: 'Rechargement Mobile Money',
-              description: data.transaction.description || 'Rechargement en attente',
-              reference: data.transaction.id,
-              createdAt: data.transaction.createdAt,
-              updatedAt: data.transaction.updatedAt,
-            },
-            { firebaseUid: firebaseUser.uid }
-          ).catch(() => {});
-        }
         setRechargeFeedback({
           type: 'success',
           text: `Demande de ${amountNum.toLocaleString('fr-FR')} ${rechargeCountryInfo.currency} envoyée (${rechargeOperator.name}). Votre solde sera crédité dès confirmation par l’administrateur.`,
@@ -600,29 +472,6 @@ export const ClientAccount: React.FC<ClientAccountProps> = ({
       const data = await res.json();
       if (res.ok && data.success) {
         if (data.user) onPaymentSuccess(data.user);
-        if (firebaseUser && data.transaction) {
-          upsertTransactionToFirestore(
-            { ...data.transaction, userId: firebaseUser.uid },
-            { firebaseUid: firebaseUser.uid }
-          ).catch(() => {});
-          upsertOperationToFirestore(
-            {
-              id: `op_${data.transaction.id}`,
-              userId: firebaseUser.uid,
-              firebaseUid: firebaseUser.uid,
-              userPhone: withdrawPhone,
-              type: 'WITHDRAWAL',
-              amount: amountNum,
-              status: 'PENDING',
-              title: 'Retrait Mobile Money',
-              description: data.transaction.description || 'Retrait en attente',
-              reference: data.transaction.id,
-              createdAt: data.transaction.createdAt,
-              updatedAt: data.transaction.updatedAt,
-            },
-            { firebaseUid: firebaseUser.uid }
-          ).catch(() => {});
-        }
         setWithdrawFeedback({
           type: 'success',
           text: `Retrait de ${amountNum.toLocaleString('fr-FR')} XOF transmis à l’administrateur pour validation.`,
@@ -674,23 +523,6 @@ export const ClientAccount: React.FC<ClientAccountProps> = ({
             </button>
           </div>
         </div>
-
-        {/* Optional Cloud Sync Link when logged in only with Phone+Password */}
-        {!firebaseUser && (
-          <div className="px-3 py-2 rounded-xl bg-blue-50 border border-blue-200 flex items-center justify-between gap-2 text-[11px]">
-            <span className="text-blue-900 font-medium truncate">
-              Sauvegardez votre compte entre appareils
-            </span>
-            <button
-              type="button"
-              onClick={handleLinkCloudAccount}
-              disabled={isLinkingCloud}
-              className="px-2.5 py-1 rounded-lg bg-blue-600 text-white font-bold text-[10px] shrink-0 cursor-pointer disabled:opacity-60"
-            >
-              {isLinkingCloud ? 'Sync...' : 'Lier Google Cloud'}
-            </button>
-          </div>
-        )}
 
         {/* Live Push Toast */}
         {liveAlert && (

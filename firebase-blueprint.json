@@ -2,171 +2,76 @@
   "entities": {
     "User": {
       "title": "User",
-      "description": "Compte utilisateur client inscrit sur la plateforme VIP Aviator",
+      "description": "Utilisateur client inscrit pour le bot Aviator VIP",
       "type": "object",
       "properties": {
-        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
-        "firebaseUid": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]*$" },
-        "email": { "type": "string", "maxLength": 160 },
-        "fullName": { "type": "string", "minLength": 1, "maxLength": 120 },
-        "phone": { "type": "string", "minLength": 3, "maxLength": 30 },
-        "country": { "type": "string", "minLength": 2, "maxLength": 50 },
-        "bookmaker": { "type": "string", "minLength": 2, "maxLength": 50 },
-        "bookmakerUserId": { "type": "string", "maxLength": 80 },
+        "id": { "type": "string", "maxLength": 128 },
+        "fullName": { "type": "string", "maxLength": 120 },
+        "phone": { "type": "string", "maxLength": 30 },
+        "country": { "type": "string", "maxLength": 50 },
+        "bookmaker": { "type": "string", "maxLength": 50 },
         "vipTier": { "type": "string", "enum": ["VIP1", "VIP2"] },
         "paymentStatus": { "type": "string", "enum": ["unpaid", "pending", "paid"] },
-        "balance": { "type": "number" },
         "amountPaid": { "type": "number" },
         "paymentReference": { "type": "string", "maxLength": 128 },
         "paymentMethod": { "type": "string", "maxLength": 50 },
         "paymentDate": { "type": "string", "maxLength": 60 },
         "registeredAt": { "type": "string", "maxLength": 60 },
-        "notes": { "type": "string", "maxLength": 500 },
-        "createdAt": { "type": "string", "format": "date-time" },
-        "updatedAt": { "type": "string", "format": "date-time" }
+        "notes": { "type": "string", "maxLength": 500 }
       },
-      "required": ["id", "firebaseUid", "fullName", "phone", "country", "bookmaker", "vipTier", "paymentStatus", "balance", "createdAt", "updatedAt"]
+      "required": ["id", "fullName", "phone", "country", "bookmaker", "vipTier", "paymentStatus"]
     },
     "Transaction": {
       "title": "Transaction",
-      "description": "Opération financière SasPay ou retrait soumise pour validation administrative",
+      "description": "Opération de paiement SasPay soumise pour validation administrative",
       "type": "object",
       "properties": {
-        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
-        "userId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
-        "firebaseUid": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]*$" },
+        "id": { "type": "string", "maxLength": 128 },
         "saspayPaymentId": { "type": "string", "maxLength": 128 },
-        "transactionType": { "type": "string", "enum": ["VIP_ACTIVATION", "RECHARGE", "WITHDRAWAL"] },
         "amount": { "type": "number" },
-        "currency": { "type": "string", "minLength": 2, "maxLength": 10 },
-        "country": { "type": "string", "minLength": 2, "maxLength": 10 },
+        "currency": { "type": "string", "maxLength": 10 },
+        "country": { "type": "string", "maxLength": 10 },
         "countryName": { "type": "string", "maxLength": 50 },
-        "network": { "type": "string", "minLength": 2, "maxLength": 50 },
+        "network": { "type": "string", "maxLength": 50 },
         "operatorName": { "type": "string", "maxLength": 80 },
-        "phone": { "type": "string", "minLength": 4, "maxLength": 30 },
-        "customerName": { "type": "string", "minLength": 2, "maxLength": 120 },
-        "bookmakerUserId": { "type": "string", "maxLength": 80 },
+        "phone": { "type": "string", "maxLength": 30 },
+        "customerName": { "type": "string", "maxLength": 120 },
         "vipTier": { "type": "string", "maxLength": 20 },
         "status": { "type": "string", "enum": ["PENDING", "SUCCESS", "FAILED"] },
         "statusMessage": { "type": "string", "maxLength": 500 },
-        "description": { "type": "string", "maxLength": 500 },
-        "createdAt": { "type": "string", "format": "date-time" },
-        "updatedAt": { "type": "string", "format": "date-time" }
+        "createdAt": { "type": "string", "maxLength": 60 },
+        "updatedAt": { "type": "string", "maxLength": 60 }
       },
-      "required": ["id", "userId", "firebaseUid", "amount", "currency", "country", "network", "phone", "customerName", "status", "createdAt", "updatedAt"]
-    },
-    "ClientOperation": {
-      "title": "ClientOperation",
-      "description": "Historique complet des opérations client (VIP, dépôts, retraits, mises et gains Aviator)",
-      "type": "object",
-      "properties": {
-        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
-        "userId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
-        "firebaseUid": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]*$" },
-        "userPhone": { "type": "string", "maxLength": 30 },
-        "type": { "type": "string", "enum": ["VIP_ACTIVATION", "RECHARGE", "WITHDRAWAL", "BET", "WIN"] },
-        "amount": { "type": "number" },
-        "status": { "type": "string", "enum": ["PENDING", "SUCCESS", "FAILED"] },
-        "title": { "type": "string", "minLength": 1, "maxLength": 140 },
-        "description": { "type": "string", "maxLength": 500 },
-        "reference": { "type": "string", "maxLength": 128 },
-        "createdAt": { "type": "string", "format": "date-time" },
-        "updatedAt": { "type": "string", "format": "date-time" }
-      },
-      "required": ["id", "userId", "firebaseUid", "userPhone", "type", "amount", "status", "title", "description", "createdAt", "updatedAt"]
+      "required": ["id", "amount", "country", "network", "phone", "status"]
     },
     "SupportConversation": {
       "title": "SupportConversation",
       "description": "Fil de discussion assistance entre client et administrateur",
       "type": "object",
       "properties": {
-        "userId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
-        "firebaseUid": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]*$" },
-        "userName": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "userId": { "type": "string", "maxLength": 128 },
+        "userName": { "type": "string", "maxLength": 120 },
         "userPhone": { "type": "string", "maxLength": 30 },
         "userCountry": { "type": "string", "maxLength": 50 },
         "lastMessageAt": { "type": "string", "maxLength": 60 },
         "unreadCountClient": { "type": "number" },
-        "unreadCountAdmin": { "type": "number" },
-        "createdAt": { "type": "string", "format": "date-time" },
-        "updatedAt": { "type": "string", "format": "date-time" }
+        "unreadCountAdmin": { "type": "number" }
       },
-      "required": ["userId", "firebaseUid", "userName", "lastMessageAt", "unreadCountClient", "unreadCountAdmin", "createdAt", "updatedAt"]
-    },
-    "SupportMessage": {
-      "title": "SupportMessage",
-      "description": "Message individuel dans une conversation de support client",
-      "type": "object",
-      "properties": {
-        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
-        "conversationId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
-        "firebaseUid": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]*$" },
-        "sender": { "type": "string", "enum": ["client", "admin"] },
-        "text": { "type": "string", "minLength": 1, "maxLength": 2000 },
-        "timestamp": { "type": "string", "maxLength": 60 },
-        "read": { "type": "boolean" },
-        "createdAt": { "type": "string", "format": "date-time" },
-        "updatedAt": { "type": "string", "format": "date-time" }
-      },
-      "required": ["id", "conversationId", "firebaseUid", "sender", "text", "read", "createdAt", "updatedAt"]
-    },
-    "AviatorRound": {
-      "title": "AviatorRound",
-      "description": "Historique des cotes et codes 15 des tours Aviator",
-      "type": "object",
-      "properties": {
-        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
-        "roundNumber": { "type": "number" },
-        "crashPoint": { "type": "number" },
-        "code15": { "type": "string", "minLength": 6, "maxLength": 32 },
-        "timestamp": { "type": "string", "maxLength": 60 },
-        "createdAt": { "type": "string", "format": "date-time" },
-        "updatedAt": { "type": "string", "format": "date-time" }
-      },
-      "required": ["id", "roundNumber", "crashPoint", "code15", "timestamp", "createdAt", "updatedAt"]
-    },
-    "AdminRecord": {
-      "title": "AdminRecord",
-      "description": "Registre des comptes administrateurs autorisés",
-      "type": "object",
-      "properties": {
-        "uid": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
-        "email": { "type": "string", "maxLength": 160 },
-        "role": { "type": "string", "enum": ["admin"] },
-        "createdAt": { "type": "string", "format": "date-time" },
-        "updatedAt": { "type": "string", "format": "date-time" }
-      },
-      "required": ["uid", "email", "role", "createdAt", "updatedAt"]
+      "required": ["userId", "userName", "lastMessageAt"]
     }
   },
   "firestore": {
     "/users/{userId}": {
       "schema": { "$ref": "#/entities/User" },
-      "description": "Comptes utilisateurs enregistrés et synchronisés entre appareils"
+      "description": "Comptes utilisateurs enregistrés"
     },
     "/transactions/{transactionId}": {
       "schema": { "$ref": "#/entities/Transaction" },
-      "description": "Transactions SasPay, dépôts, retraits et validations administratives"
-    },
-    "/operations/{operationId}": {
-      "schema": { "$ref": "#/entities/ClientOperation" },
-      "description": "Journal persistant des opérations client et parties Aviator"
+      "description": "Transactions et demandes de validation de paiement"
     },
     "/supportConversations/{conversationId}": {
       "schema": { "$ref": "#/entities/SupportConversation" },
       "description": "Conversations du service client"
-    },
-    "/supportConversations/{conversationId}/messages/{messageId}": {
-      "schema": { "$ref": "#/entities/SupportMessage" },
-      "description": "Messages échangés dans une conversation de support"
-    },
-    "/aviatorHistory/{roundId}": {
-      "schema": { "$ref": "#/entities/AviatorRound" },
-      "description": "Historique des cotes Aviator et codes 15"
-    },
-    "/admins/{adminId}": {
-      "schema": { "$ref": "#/entities/AdminRecord" },
-      "description": "Administrateurs habilités"
     }
   }
 }

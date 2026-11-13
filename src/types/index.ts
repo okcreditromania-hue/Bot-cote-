@@ -4,8 +4,6 @@ export type MomoProvider = 'MTN' | 'ORANGE' | 'MOOV' | 'WAVE';
 
 export interface User {
   id: string;
-  firebaseUid?: string;
-  email?: string;
   fullName: string;
   phone: string;
   password?: string;
@@ -29,7 +27,6 @@ export type ClientOperationStatus = 'PENDING' | 'SUCCESS' | 'FAILED';
 export interface ClientOperation {
   id: string;
   userId: string;
-  firebaseUid?: string;
   userPhone: string;
   type: ClientOperationType;
   amount: number;

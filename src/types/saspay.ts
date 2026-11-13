@@ -81,7 +81,6 @@ export type TransactionCategory = 'VIP_ACTIVATION' | 'RECHARGE' | 'WITHDRAWAL';
 export interface TransactionRecord {
   id: string; // Internal ID
   userId?: string; // Strict binding to authenticated user ID
-  firebaseUid?: string; // Firebase Auth UID for cross-device sync
   bookmakerUserId?: string; // Betting site ID entered by client
   saspayPaymentId?: string; // ID returned by payment gateway
   transactionType?: TransactionCategory;
