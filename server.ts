@@ -224,6 +224,265 @@ app.post('/api/admin/login', (req: Request, res: Response) => {
   });
 });
 
+// =========================================================================
+// FIREBASE CLOUD FIRESTORE BRIDGE & CROSS-DEVICE SYNC ENDPOINTS
+// =========================================================================
+interface FirebaseAppletConfig {
+  projectId: string;
+  apiKey: string;
+  firestoreDatabaseId: string;
+}
+
+const FIREBASE_CFG_PATH = path.resolve(__dirname, 'firebase-applet-config.json');
+let firebaseCfg: FirebaseAppletConfig | null = null;
+try {
+  if (fs.existsSync(FIREBASE_CFG_PATH)) {
+    firebaseCfg = JSON.parse(fs.readFileSync(FIREBASE_CFG_PATH, 'utf-8'));
+  }
+} catch {
+  firebaseCfg = null;
+}
+
+const ADMIN_ALLOWED_EMAIL = 'okcreditromania@gmail.com';
+
+app.post('/api/admin/google-login', async (req: Request, res: Response) => {
+  try {
+    const { idToken } = req.body;
+    if (!idToken || !firebaseCfg?.apiKey) {
+      return res.status(400).json({ success: false, message: 'Jeton Google Firebase manquant.' });
+    }
+    const lookupRes = await fetch(
+      `https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=${encodeURIComponent(firebaseCfg.apiKey)}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ idToken }),
+      }
+    );
+    const lookupData: any = await lookupRes.json();
+    const fbUser = lookupData?.users?.[0];
+    if (!fbUser || fbUser.email !== ADMIN_ALLOWED_EMAIL || fbUser.emailVerified !== true) {
+      return res.status(403).json({
+        success: false,
+        message: 'Compte Google non autorisé pour l’accès administrateur.',
+      });
+    }
+    return res.json({
+      success: true,
+      token: 'admin_saspay_auth_session_34343434',
+      user: {
+        role: 'SUPER_ADMIN',
+        username: '34343434',
+        email: fbUser.email,
+        uid: fbUser.localId,
+        name: fbUser.displayName || 'Administrateur Aviator VIP',
+      },
+    });
+  } catch {
+    return res.status(500).json({ success: false, message: 'Erreur vérification Google Admin.' });
+  }
+});
+
+app.post('/api/users/link-firebase', (req: Request, res: Response) => {
+  const { userId, phone, firebaseUid, email } = req.body || {};
+  if (!firebaseUid) {
+    return res.status(400).json({ success: false, message: 'firebaseUid requis.' });
+  }
+  const idx = users.findIndex(
+    (u) => (userId && u.id === userId) || (phone && isSamePhoneNumber(u.phone, phone))
+  );
+  if (idx === -1) {
+    return res.status(404).json({ success: false, message: 'Utilisateur introuvable.' });
+  }
+  users[idx] = {
+    ...users[idx],
+    firebaseUid: String(firebaseUid).trim(),
+    email: email ? String(email).trim() : users[idx].email,
+  };
+  saveDataStore();
+  broadcastToUser(users[idx], 'user:updated', { user: users[idx] });
+  return res.json({ success: true, user: users[idx] });
+});
+
+app.get('/api/sync/export-snapshot', (_req: Request, res: Response) => {
+  return res.json({
+    success: true,
+    snapshot: {
+      users,
+      transactions,
+      operations,
+      supportConversations,
+      aviatorHistory,
+    },
+  });
+});
+
+app.post('/api/sync/import-snapshot', (req: Request, res: Response) => {
+  const incoming = req.body || {};
+  const inUsers: User[] = Array.isArray(incoming.users) ? incoming.users : [];
+  const inTx: TransactionRecord[] = Array.isArray(incoming.transactions) ? incoming.transactions : [];
+  const inOps: ClientOperation[] = Array.isArray(incoming.operations) ? incoming.operations : [];
+  const inConvs: ServerSupportConversation[] = Array.isArray(incoming.supportConversations)
+    ? incoming.supportConversations
+    : [];
+  const inAviator: AviatorRoundHistoryItem[] = Array.isArray(incoming.aviatorHistory)
+    ? incoming.aviatorHistory
+    : [];
+
+  // 1. Non-destructive merge of Users (preserve paid status, passwords, balances)
+  for (const cu of inUsers) {
+    const idx = users.findIndex(
+      (u) =>
+        u.id === cu.id ||
+        (cu.firebaseUid && u.firebaseUid === cu.firebaseUid) ||
+        (cu.phone && isSamePhoneNumber(u.phone, cu.phone))
+    );
+    if (idx === -1) {
+      users.push({
+        ...cu,
+        balance: typeof cu.balance === 'number' ? cu.balance : 0,
+      });
+    } else {
+      const ex = users[idx];
+      const mergedPaid = ex.paymentStatus === 'paid' || cu.paymentStatus === 'paid';
+      users[idx] = {
+        ...cu,
+        ...ex,
+        firebaseUid: ex.firebaseUid || cu.firebaseUid,
+        email: ex.email || cu.email,
+        password: ex.password || cu.password,
+        bookmakerUserId: ex.bookmakerUserId || cu.bookmakerUserId,
+        paymentStatus: mergedPaid ? 'paid' : (ex.paymentStatus || cu.paymentStatus || 'unpaid'),
+        balance: Math.max(
+          typeof ex.balance === 'number' ? ex.balance : 0,
+          typeof cu.balance === 'number' ? cu.balance : 0
+        ),
+        amountPaid: ex.amountPaid ?? cu.amountPaid,
+        paymentReference: ex.paymentReference || cu.paymentReference,
+        paymentMethod: ex.paymentMethod || cu.paymentMethod,
+        paymentDate: ex.paymentDate || cu.paymentDate,
+      };
+    }
+  }
+
+  // 2. Merge Transactions (terminal status SUCCESS/FAILED takes priority over PENDING)
+  for (const tx of inTx) {
+    const idx = transactions.findIndex((t) => t.id === tx.id);
+    if (idx === -1) {
+      transactions.push(tx);
+    } else if (transactions[idx].status === 'PENDING' && tx.status !== 'PENDING') {
+      transactions[idx] = { ...transactions[idx], ...tx };
+    }
+  }
+  transactions.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+
+  // 3. Merge Operations
+  for (const op of inOps) {
+    const idx = operations.findIndex((o) => o.id === op.id);
+    if (idx === -1) {
+      operations.push(op);
+    } else if (operations[idx].status === 'PENDING' && op.status !== 'PENDING') {
+      operations[idx] = { ...operations[idx], ...op };
+    }
+  }
+  operations.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+
+  // 4. Merge Support Conversations & Messages
+  for (const conv of inConvs) {
+    const idx = supportConversations.findIndex((c) => c.userId === conv.userId);
+    if (idx === -1) {
+      supportConversations.push(conv);
+    } else {
+      const exConv = supportConversations[idx];
+      const msgMap = new Map<string, ServerChatMessage>();
+      for (const m of exConv.messages || []) msgMap.set(m.id, m);
+      for (const m of conv.messages || []) {
+        if (!msgMap.has(m.id)) msgMap.set(m.id, m);
+      }
+      exConv.messages = Array.from(msgMap.values()).sort((a, b) =>
+        (a.timestamp || '').localeCompare(b.timestamp || '')
+      );
+      exConv.lastMessageAt =
+        exConv.lastMessageAt > conv.lastMessageAt ? exConv.lastMessageAt : conv.lastMessageAt;
+    }
+  }
+
+  // 5. Merge Aviator History
+  const roundMap = new Map<number, AviatorRoundHistoryItem>();
+  for (const r of aviatorHistory) roundMap.set(r.roundNumber, r);
+  for (const r of inAviator) {
+    if (!roundMap.has(r.roundNumber)) roundMap.set(r.roundNumber, r);
+  }
+  aviatorHistory = Array.from(roundMap.values())
+    .sort((a, b) => b.roundNumber - a.roundNumber)
+    .slice(0, 40);
+
+  saveDataStore();
+  broadcastToAdmins('admin:update', { reason: 'firestore_sync' });
+
+  return res.json({
+    success: true,
+    snapshot: {
+      users,
+      transactions,
+      operations,
+      supportConversations,
+      aviatorHistory,
+    },
+  });
+});
+
+app.post('/api/sync/import-client', (req: Request, res: Response) => {
+  const { user: cu, transactions: inTx = [], operations: inOps = [] } = req.body || {};
+  if (!cu || !cu.id) {
+    return res.status(400).json({ success: false, message: 'Données utilisateur invalides.' });
+  }
+
+  const idx = users.findIndex(
+    (u) =>
+      u.id === cu.id ||
+      (cu.firebaseUid && u.firebaseUid === cu.firebaseUid) ||
+      (cu.phone && isSamePhoneNumber(u.phone, cu.phone))
+  );
+
+  let savedUser: User;
+  if (idx === -1) {
+    savedUser = {
+      ...cu,
+      balance: typeof cu.balance === 'number' ? cu.balance : 0,
+    };
+    users.unshift(savedUser);
+  } else {
+    const ex = users[idx];
+    const mergedPaid = ex.paymentStatus === 'paid' || cu.paymentStatus === 'paid';
+    savedUser = {
+      ...cu,
+      ...ex,
+      firebaseUid: ex.firebaseUid || cu.firebaseUid,
+      email: ex.email || cu.email,
+      password: ex.password || cu.password,
+      bookmakerUserId: ex.bookmakerUserId || cu.bookmakerUserId,
+      paymentStatus: mergedPaid ? 'paid' : (ex.paymentStatus || cu.paymentStatus || 'unpaid'),
+      balance: Math.max(
+        typeof ex.balance === 'number' ? ex.balance : 0,
+        typeof cu.balance === 'number' ? cu.balance : 0
+      ),
+    };
+    users[idx] = savedUser;
+  }
+
+  for (const tx of Array.isArray(inTx) ? inTx : []) {
+    if (!transactions.some((t) => t.id === tx.id)) transactions.push(tx);
+  }
+  for (const op of Array.isArray(inOps) ? inOps : []) {
+    if (!operations.some((o) => o.id === op.id)) operations.push(op);
+  }
+
+  saveDataStore();
+  broadcastToAdmins('admin:update', { reason: 'client_cloud_restore' });
+  return res.json({ success: true, user: savedUser });
+});
+
 // Helper to match phone numbers strictly without unsafe substring collisions
 function isSamePhoneNumber(phoneA?: string, phoneB?: string): boolean {
   if (!phoneA || !phoneB) return false;

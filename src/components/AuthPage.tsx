@@ -1,7 +1,9 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { User, VIPPlanId } from '../types';
 import { WEST_AFRICA_COUNTRIES, WEST_AFRICA_BOOKMAKERS, StorageService } from '../services/storage';
 import { ClientVideoSection } from './ClientVideoSection';
+import { useFirebase } from '../firebase/FirebaseContext';
+import { ADMIN_EMAIL } from '../firebase/firestoreService';
 import {
   Sparkles,
   Lock,
@@ -29,7 +31,13 @@ export const AuthPage: React.FC<AuthPageProps> = ({
   onAuthSuccess,
   onAdminLoginSuccess,
 }) => {
+  const { signInWithGooglePopup, syncClientWithFirestore, syncAdminBidirectional } = useFirebase();
   const [activeTab, setActiveTab] = useState<'login' | 'register'>(initialTab);
+  const [isGoogleLoading, setIsGoogleLoading] = useState(false);
+
+  useEffect(() => {
+    setActiveTab(initialTab);
+  }, [initialTab]);
 
   // Registration Form states (Always virgin/blank by default)
   const [fullName, setFullName] = useState('');
@@ -50,6 +58,49 @@ export const AuthPage: React.FC<AuthPageProps> = ({
 
   const [errorMessage, setErrorMessage] = useState('');
   const [copiedLink, setCopiedLink] = useState(false);
+
+  const handleGoogleAuth = async () => {
+    setErrorMessage('');
+    setIsGoogleLoading(true);
+    try {
+      const fbUser = await signInWithGooglePopup();
+      if (!fbUser) {
+        setIsGoogleLoading(false);
+        return;
+      }
+
+      if (fbUser.email === ADMIN_EMAIL && fbUser.emailVerified) {
+        const idToken = await fbUser.getIdToken();
+        const res = await fetch('/api/admin/google-login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ idToken }),
+        });
+        if (res.ok) {
+          localStorage.setItem('saspay_admin_auth', 'authenticated_34343434');
+          localStorage.setItem('saspay_admin_user', fbUser.email);
+          await syncAdminBidirectional();
+          if (onAdminLoginSuccess) {
+            onAdminLoginSuccess();
+          }
+          return;
+        }
+      }
+
+      const synced = await syncClientWithFirestore(null);
+      if (synced?.user) {
+        StorageService.addUser(synced.user);
+        StorageService.setCurrentUser(synced.user);
+        onAuthSuccess(synced.user);
+      } else {
+        setErrorMessage('Impossible de synchroniser le compte Google pour le moment.');
+      }
+    } catch (err: any) {
+      setErrorMessage(err?.message || 'Connexion Google interrompue.');
+    } finally {
+      setIsGoogleLoading(false);
+    }
+  };
 
   const handleCountryChange = (cName: string) => {
     setCountry(cName);
@@ -619,6 +670,31 @@ export const AuthPage: React.FC<AuthPageProps> = ({
             </button>
           </form>
         )}
+
+        {/* Firebase Google Auth & Cloud Sync Option (Works on both tabs cleanly) */}
+        <div className="px-4 pb-4 pt-1 border-t border-slate-100 space-y-2">
+          <div className="text-[10px] text-center font-mono uppercase text-slate-400">
+            Ou synchronisation Cloud permanente
+          </div>
+          <button
+            type="button"
+            onClick={handleGoogleAuth}
+            disabled={isGoogleLoading}
+            className="w-full min-h-[44px] py-2.5 px-4 bg-white hover:bg-slate-50 border border-slate-300 text-slate-800 font-bold text-xs rounded-xl flex items-center justify-center gap-2 shadow-2xs transition-colors cursor-pointer disabled:opacity-60"
+          >
+            {isGoogleLoading ? (
+              <div className="w-4 h-4 rounded-full border-2 border-slate-600 border-t-transparent animate-spin" />
+            ) : (
+              <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24">
+                <path fill="#4285F4" d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.665-5.17 3.665-9.17Z" />
+                <path fill="#34A853" d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.11-6.72-4.96H1.29v3.14C3.26 21.3 7.37 24 12 24Z" />
+                <path fill="#FBBC05" d="M5.28 14.24c-.24-.72-.38-1.49-.38-2.24s.14-1.52.38-2.24V6.62H1.29C.47 8.24 0 10.06 0 12s.47 3.76 1.29 5.38l3.99-3.14Z" />
+                <path fill="#EA4335" d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.37 0 3.26 2.7 1.29 6.62l3.99 3.14c.95-2.85 3.6-4.96 6.72-4.96Z" />
+              </svg>
+            )}
+            <span>{isGoogleLoading ? 'Connexion Firebase...' : 'Continuer avec Google'}</span>
+          </button>
+        </div>
       </div>
     </div>
   );

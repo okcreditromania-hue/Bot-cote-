@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { TransactionRecord, DashboardStats } from '../types/saspay';
 import { AviatorGameState, User } from '../types';
+import { useFirebase } from '../firebase/FirebaseContext';
+import { subscribeAdminFirestore, ADMIN_EMAIL } from '../firebase/firestoreService';
 import {
   Search,
   CheckCircle2,
@@ -22,6 +24,7 @@ import {
   PlusCircle,
   X,
   FileSpreadsheet,
+  Cloud,
 } from 'lucide-react';
 
 interface AdminDashboardProps {
@@ -81,6 +84,14 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [aviatorState, setAviatorState] = useState<AviatorGameState | null>(null);
   const [nextOddInput, setNextOddInput] = useState<string>('');
   const [isSettingOdd, setIsSettingOdd] = useState(false);
+
+  const {
+    isFirebaseAdmin,
+    syncStatus,
+    syncError,
+    signInWithGooglePopup,
+    syncAdminBidirectional,
+  } = useFirebase();
 
   const fetchPendingPayments = async () => {
     try {
@@ -162,6 +173,25 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     };
   }, []);
 
+  // Real-time Firestore listener when Firebase Admin is authenticated
+  useEffect(() => {
+    if (!isFirebaseAdmin) return;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const unsub = subscribeAdminFirestore(() => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        fetchPendingPayments();
+        fetchUsers();
+        fetchConversations();
+        onRefreshData();
+      }, 600);
+    });
+    return () => {
+      if (timer) clearTimeout(timer);
+      unsub();
+    };
+  }, [isFirebaseAdmin]);
+
   const activeConversation = conversations.find((c) => c.userId === selectedConversationId) || conversations[0];
   const totalUnreadAdmin = conversations.reduce((sum, c) => sum + (c.unreadCountAdmin || 0), 0);
 
@@ -203,6 +233,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         fetchUsers();
         fetchConversations();
         onRefreshData();
+        if (isFirebaseAdmin) syncAdminBidirectional().catch(() => {});
       }
     } finally {
       setIsProcessingDecision(null);
@@ -224,6 +255,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     if (res.ok) {
       showNotice(`VIP de ${user.fullName} : ${newStatus === 'paid' ? 'ACTIF' : 'INACTIF'}`);
       fetchUsers();
+      if (isFirebaseAdmin) syncAdminBidirectional().catch(() => {});
     }
   };
 
@@ -244,6 +276,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       setCreditInputs((prev) => ({ ...prev, [user.id]: '' }));
       fetchUsers();
       onRefreshData();
+      if (isFirebaseAdmin) syncAdminBidirectional().catch(() => {});
     }
   };
 
@@ -252,6 +285,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     if (res.ok) {
       showNotice(`Compte de ${userName} supprimé.`);
       fetchUsers();
+      if (isFirebaseAdmin) syncAdminBidirectional().catch(() => {});
     }
   };
 
@@ -438,6 +472,65 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             </span>
           </div>
         </div>
+
+        {/* Compact Firebase Firestore Permanent Memory Bar */}
+        <div className="pt-2 border-t border-slate-800 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-1.5 text-[10px] font-mono min-w-0">
+            <Cloud className={`w-3.5 h-3.5 shrink-0 ${isFirebaseAdmin ? 'text-emerald-400' : 'text-amber-400'}`} />
+            <span className="truncate text-slate-300">
+              {isFirebaseAdmin
+                ? syncStatus === 'syncing'
+                  ? 'Synchronisation Firestore...'
+                  : syncStatus === 'quota_exceeded'
+                  ? 'Quota Firestore atteint'
+                  : 'Firestore Cloud Synchronisé'
+                : 'Mémoire Cloud prête à lier'}
+            </span>
+          </div>
+
+          {isFirebaseAdmin ? (
+            <button
+              type="button"
+              onClick={() => {
+                syncAdminBidirectional().then(() => {
+                  fetchPendingPayments();
+                  fetchUsers();
+                  fetchConversations();
+                  onRefreshData();
+                  showNotice('Base Cloud Firestore synchronisée avec succès.');
+                });
+              }}
+              className="px-2.5 py-1 rounded-lg bg-emerald-600/20 border border-emerald-500/40 text-emerald-300 text-[10px] font-bold shrink-0 cursor-pointer"
+            >
+              Sync Cloud
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={async () => {
+                const fbUser = await signInWithGooglePopup().catch(() => null);
+                if (fbUser && fbUser.email === ADMIN_EMAIL && fbUser.emailVerified) {
+                  await syncAdminBidirectional();
+                  fetchPendingPayments();
+                  fetchUsers();
+                  fetchConversations();
+                  onRefreshData();
+                  showNotice('Firebase Firestore connecté : toutes les données existantes sont sauvegardées.');
+                } else if (fbUser) {
+                  showNotice(`Veuillez vous connecter avec ${ADMIN_EMAIL}`);
+                }
+              }}
+              className="px-2.5 py-1 rounded-lg bg-amber-500 text-slate-950 text-[10px] font-bold shrink-0 cursor-pointer"
+            >
+              Activer Cloud Google
+            </button>
+          )}
+        </div>
+        {syncError && (
+          <div className="text-[10px] text-amber-300 bg-amber-950/50 border border-amber-800 rounded-lg px-2.5 py-1.5">
+            {syncError}
+          </div>
+        )}
       </div>
 
       {actionNotice && (
