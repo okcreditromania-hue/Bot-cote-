@@ -160,21 +160,9 @@ export const SUPPORTED_COUNTRIES: Record<CountryCode, CountryInfo> = {
     phonePrefix: '+245',
     phonePlaceholder: '95 500 00 00',
     phoneFormatRegex: '^[0-9]{7,9}$',
-    operators: [
-      {
-        id: 'finances_gw',
-        name: 'Finances Mobiles Bissau',
-        brand: 'FINANCES',
-        logoText: 'Finances Bissau',
-        colorBg: 'bg-emerald-600',
-        colorText: 'text-white',
-        accentBorder: 'border-emerald-600',
-        enabled: true,
-        minAmount: 100,
-        maxAmount: 1500000,
-        instructionFr: 'Confirmez votre paiement Finances Mobiles Bissau sur votre téléphone.',
-      },
-    ],
+    gatewayNote:
+      'Finances Mobiles Bissau n’est pas encore activé sur la passerelle SASPay. Sélectionnez un réseau actif d’un pays UEMOA XOF.',
+    operators: [],
   },
   ML: {
     code: 'ML',

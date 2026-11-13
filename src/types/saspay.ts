@@ -20,8 +20,7 @@ export type OperatorId =
   | 'freemoney_sn'
   | 'expresso_sn'
   | 'moov_tg'
-  | 'togocel'
-  | 'finances_gw';
+  | 'togocel';
 
 export type PaymentStatus = 'PENDING' | 'SUCCESS' | 'FAILED';
 
@@ -38,8 +37,7 @@ export interface Operator {
     | 'FREE'
     | 'EXPRESSO'
     | 'TMONEY'
-    | 'MOBICASH'
-    | 'FINANCES';
+    | 'MOBICASH';
   logoText: string;
   colorBg: string;
   colorText: string;
@@ -104,13 +102,6 @@ export interface TransactionRecord {
   updatedAt: string;
   idempotencyKey: string;
   apiResponse?: any;
-  hasPaymentProof?: boolean;
-  paymentProofUrl?: string;
-  proofSubmittedAt?: string;
-  proofFileName?: string;
-  rechargeConfirmedByClient?: boolean;
-  resendCount?: number;
-  lastResentAt?: string;
 }
 
 export interface DashboardStats {

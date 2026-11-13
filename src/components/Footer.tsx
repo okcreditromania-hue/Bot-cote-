@@ -13,7 +13,7 @@ export const Footer: React.FC<FooterProps> = ({ onGoToLogin }) => {
           <div className="font-bold text-slate-900">Mobile Money Multi-Pays (XOF)</div>
           <span className="flex items-center gap-1 text-emerald-700 font-semibold text-[10px]">
             <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
-            Serveur Sécurisé Actif
+            Cloud Firestore Actif
           </span>
         </div>
 

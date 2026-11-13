@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { TransactionRecord, DashboardStats } from '../types/saspay';
 import { AviatorGameState, User } from '../types';
 import { useFirebase } from '../firebase/FirebaseContext';
-import { subscribeAdminFirestore } from '../firebase/firestoreService';
+import { subscribeAdminFirestore, ADMIN_EMAIL } from '../firebase/firestoreService';
 import {
   Search,
   CheckCircle2,
@@ -24,8 +24,7 @@ import {
   PlusCircle,
   X,
   FileSpreadsheet,
-  FileCheck2,
-  ZoomIn,
+  Cloud,
 } from 'lucide-react';
 
 interface AdminDashboardProps {
@@ -58,9 +57,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   stats,
   onRefreshData,
 }) => {
-  const [activeAdminTab, setActiveAdminTab] = useState<'vip_proofs' | 'pending' | 'bot' | 'users' | 'transactions' | 'support'>('vip_proofs');
-  const [vipFilterMode, setVipFilterMode] = useState<'PENDING' | 'ALL'>('PENDING');
-  const [previewProofUrl, setPreviewProofUrl] = useState<string | null>(null);
+  const [activeAdminTab, setActiveAdminTab] = useState<'pending' | 'bot' | 'users' | 'transactions' | 'support'>('pending');
 
   // Filter state
   const [searchTerm, setSearchTerm] = useState('');
@@ -90,6 +87,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
   const {
     isFirebaseAdmin,
+    syncStatus,
+    syncError,
+    signInWithGooglePopup,
     syncAdminBidirectional,
   } = useFirebase();
 
@@ -378,20 +378,14 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     );
   });
 
-  const resolveTxCategory = (tx: TransactionRecord): 'WITHDRAWAL' | 'RECHARGE' | 'VIP_ACTIVATION' => {
-    if (tx.transactionType) return tx.transactionType;
-    if (tx.description?.toLowerCase().includes('retrait')) return 'WITHDRAWAL';
-    if (tx.description?.toLowerCase().includes('rechargement')) return 'RECHARGE';
-    return 'VIP_ACTIVATION';
-  };
-
-  const vipAllTransactions = transactions.filter((t) => resolveTxCategory(t) === 'VIP_ACTIVATION');
-  const vipPendingPayments = pendingPayments.filter((t) => resolveTxCategory(t) === 'VIP_ACTIVATION');
-  const nonVipPendingPayments = pendingPayments.filter((t) => resolveTxCategory(t) !== 'VIP_ACTIVATION');
-  const displayedVipRequests = vipFilterMode === 'PENDING' ? vipPendingPayments : vipAllTransactions;
-
   const getCategoryMeta = (tx: TransactionRecord) => {
-    const cat = resolveTxCategory(tx);
+    const cat =
+      tx.transactionType ||
+      (tx.description?.toLowerCase().includes('retrait')
+        ? 'WITHDRAWAL'
+        : tx.description?.toLowerCase().includes('rechargement')
+        ? 'RECHARGE'
+        : 'VIP_ACTIVATION');
     if (cat === 'WITHDRAWAL') {
       return {
         label: 'RETRAIT MOBILE MONEY',
@@ -479,6 +473,64 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           </div>
         </div>
 
+        {/* Compact Firebase Firestore Permanent Memory Bar */}
+        <div className="pt-2 border-t border-slate-800 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-1.5 text-[10px] font-mono min-w-0">
+            <Cloud className={`w-3.5 h-3.5 shrink-0 ${isFirebaseAdmin ? 'text-emerald-400' : 'text-amber-400'}`} />
+            <span className="truncate text-slate-300">
+              {isFirebaseAdmin
+                ? syncStatus === 'syncing'
+                  ? 'Synchronisation Firestore...'
+                  : syncStatus === 'quota_exceeded'
+                  ? 'Quota Firestore atteint'
+                  : 'Firestore Cloud Synchronisé'
+                : 'Mémoire Cloud prête à lier'}
+            </span>
+          </div>
+
+          {isFirebaseAdmin ? (
+            <button
+              type="button"
+              onClick={() => {
+                syncAdminBidirectional().then(() => {
+                  fetchPendingPayments();
+                  fetchUsers();
+                  fetchConversations();
+                  onRefreshData();
+                  showNotice('Base Cloud Firestore synchronisée avec succès.');
+                });
+              }}
+              className="px-2.5 py-1 rounded-lg bg-emerald-600/20 border border-emerald-500/40 text-emerald-300 text-[10px] font-bold shrink-0 cursor-pointer"
+            >
+              Sync Cloud
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={async () => {
+                const fbUser = await signInWithGooglePopup().catch(() => null);
+                if (fbUser && fbUser.email === ADMIN_EMAIL && fbUser.emailVerified) {
+                  await syncAdminBidirectional();
+                  fetchPendingPayments();
+                  fetchUsers();
+                  fetchConversations();
+                  onRefreshData();
+                  showNotice('Firebase Firestore connecté : toutes les données existantes sont sauvegardées.');
+                } else if (fbUser) {
+                  showNotice(`Veuillez vous connecter avec ${ADMIN_EMAIL}`);
+                }
+              }}
+              className="px-2.5 py-1 rounded-lg bg-amber-500 text-slate-950 text-[10px] font-bold shrink-0 cursor-pointer"
+            >
+              Activer Cloud Google
+            </button>
+          )}
+        </div>
+        {syncError && (
+          <div className="text-[10px] text-amber-300 bg-amber-950/50 border border-amber-800 rounded-lg px-2.5 py-1.5">
+            {syncError}
+          </div>
+        )}
       </div>
 
       {actionNotice && (
@@ -492,22 +544,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-1">
         <button
           type="button"
-          onClick={() => setActiveAdminTab('vip_proofs')}
-          className={`min-h-[42px] px-3 rounded-xl text-xs font-bold flex items-center gap-1.5 shrink-0 cursor-pointer border ${
-            activeAdminTab === 'vip_proofs'
-              ? 'bg-emerald-600 text-white border-emerald-600'
-              : 'bg-white text-slate-700 border-slate-200'
-          }`}
-        >
-          <FileCheck2 className="w-3.5 h-3.5" />
-          <span>Preuves VIP</span>
-          <span className="px-1.5 py-0.5 rounded bg-black/15 font-mono text-[10px]">
-            {vipPendingPayments.length}
-          </span>
-        </button>
-
-        <button
-          type="button"
           onClick={() => setActiveAdminTab('pending')}
           className={`min-h-[42px] px-3 rounded-xl text-xs font-bold flex items-center gap-1.5 shrink-0 cursor-pointer border ${
             activeAdminTab === 'pending'
@@ -516,9 +552,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           }`}
         >
           <Hourglass className="w-3.5 h-3.5" />
-          <span>Dépôts / Retraits</span>
+          <span>Validations</span>
           <span className="px-1.5 py-0.5 rounded bg-black/15 font-mono text-[10px]">
-            {nonVipPendingPayments.length}
+            {pendingPayments.length}
           </span>
         </button>
 
@@ -581,198 +617,20 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       </div>
 
       {/* ===================================================================== */}
-      {/* TAB 0: DEDICATED VIP SUBSCRIPTION PROOFS MENU (ACCEPTER / REJETER)    */}
-      {/* ===================================================================== */}
-      {activeAdminTab === 'vip_proofs' && (
-        <div className="space-y-3">
-          <div className="bg-white rounded-2xl border border-slate-200 p-3 flex items-center justify-between gap-2">
-            <div>
-              <h3 className="text-xs font-black text-slate-900 uppercase">
-                Validation Abonnements VIP (Captures SMS)
-              </h3>
-              <p className="text-[11px] text-slate-500">
-                Vérifiez la capture d’écran du SMS de paiement puis acceptez ou rejetez l’accès VIP.
-              </p>
-            </div>
-            <div className="flex items-center gap-1 shrink-0">
-              <button
-                type="button"
-                onClick={() => setVipFilterMode('PENDING')}
-                className={`px-2.5 py-1.5 rounded-lg text-[10px] font-bold cursor-pointer ${
-                  vipFilterMode === 'PENDING'
-                    ? 'bg-emerald-600 text-white'
-                    : 'bg-slate-100 text-slate-700'
-                }`}
-              >
-                En attente ({vipPendingPayments.length})
-              </button>
-              <button
-                type="button"
-                onClick={() => setVipFilterMode('ALL')}
-                className={`px-2.5 py-1.5 rounded-lg text-[10px] font-bold cursor-pointer ${
-                  vipFilterMode === 'ALL'
-                    ? 'bg-slate-900 text-white'
-                    : 'bg-slate-100 text-slate-700'
-                }`}
-              >
-                Toutes ({vipAllTransactions.length})
-              </button>
-            </div>
-          </div>
-
-          {displayedVipRequests.length === 0 ? (
-            <div className="p-8 text-center bg-white rounded-2xl border border-slate-200 space-y-2">
-              <FileCheck2 className="w-8 h-8 text-emerald-600 mx-auto" />
-              <div className="text-sm font-bold text-slate-900">Aucun abonnement VIP en attente</div>
-              <p className="text-xs text-slate-500">
-                Les preuves de paiement VIP (captures d’écran SMS) envoyées par les clients apparaîtront ici en direct.
-              </p>
-            </div>
-          ) : (
-            displayedVipRequests.map((p) => (
-              <div
-                key={p.id}
-                className="bg-white p-4 rounded-2xl border-2 border-emerald-200 shadow-sm space-y-3"
-              >
-                <div className="flex items-center justify-between gap-2">
-                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-mono font-bold border bg-amber-100 text-amber-800 border-amber-200">
-                    ABONNEMENT VIP
-                  </span>
-                  <span
-                    className={`font-mono font-bold text-[10px] px-2 py-0.5 rounded ${
-                      p.status === 'SUCCESS'
-                        ? 'bg-emerald-100 text-emerald-800'
-                        : p.status === 'PENDING'
-                        ? 'bg-amber-100 text-amber-800'
-                        : 'bg-rose-100 text-rose-800'
-                    }`}
-                  >
-                    {p.status === 'SUCCESS' ? 'ACCEPTÉ' : p.status === 'PENDING' ? 'EN ATTENTE' : 'REJETÉ'}
-                  </span>
-                </div>
-
-                <div className="flex items-center justify-between gap-2">
-                  <div className="min-w-0">
-                    <h4 className="text-sm font-black text-slate-900 truncate">{p.customerName}</h4>
-                    <p className="text-xs font-mono text-slate-600 flex items-center gap-1">
-                      <Phone className="w-3 h-3 text-slate-400" />
-                      <span>{p.phone}</span>
-                    </p>
-                  </div>
-                  <div className="text-right shrink-0">
-                    <div className="text-lg font-mono font-black text-emerald-700 tabular-nums">
-                      {p.amount.toLocaleString('fr-FR')} {p.currency}
-                    </div>
-                    <span className="text-[10px] text-slate-500">
-                      {p.countryName} · {p.operatorName}
-                    </span>
-                  </div>
-                </div>
-
-                <div className="text-[11px] text-slate-600 bg-slate-50 p-2 rounded-xl border border-slate-100 space-y-0.5">
-                  <div>{p.description}</div>
-                  {p.bookmakerUserId && (
-                    <div className="font-mono font-bold text-blue-700">
-                      ID Site de Paris : {p.bookmakerUserId}
-                    </div>
-                  )}
-                </div>
-
-                {/* SMS Confirmation Screenshot Proof Viewer */}
-                {p.hasPaymentProof && p.paymentProofUrl ? (
-                  <div className="p-2.5 rounded-xl bg-emerald-50 border border-emerald-200 space-y-2">
-                    <div className="flex items-center justify-between text-[11px] font-bold text-emerald-900">
-                      <span className="flex items-center gap-1.5">
-                        <FileCheck2 className="w-4 h-4 text-emerald-600" />
-                        <span>Capture d’écran SMS reçue</span>
-                      </span>
-                      {p.proofSubmittedAt && (
-                        <span className="font-mono text-[10px] text-emerald-700">
-                          {new Date(p.proofSubmittedAt).toLocaleTimeString('fr-FR', {
-                            hour: '2-digit',
-                            minute: '2-digit',
-                          })}
-                        </span>
-                      )}
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setPreviewProofUrl(p.paymentProofUrl!)}
-                      className="relative w-full rounded-xl overflow-hidden border border-emerald-300 bg-white group cursor-pointer block"
-                    >
-                      <img
-                        src={p.paymentProofUrl}
-                        alt={`Preuve SMS ${p.customerName}`}
-                        className="w-full max-h-52 object-contain mx-auto"
-                      />
-                      <span className="absolute bottom-2 right-2 px-2 py-1 rounded-lg bg-slate-900/80 text-white text-[10px] font-bold flex items-center gap-1">
-                        <ZoomIn className="w-3 h-3" />
-                        <span>Agrandir SMS</span>
-                      </span>
-                    </button>
-                  </div>
-                ) : (
-                  <div className="p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-[11px] font-semibold text-amber-900 flex items-center gap-2">
-                    <Hourglass className="w-4 h-4 text-amber-600 shrink-0" />
-                    <span>En attente d’importation de la capture d’écran SMS par le client.</span>
-                  </div>
-                )}
-
-                {p.status === 'PENDING' && (
-                  <div className="flex items-center gap-2 pt-1">
-                    <button
-                      type="button"
-                      disabled={isProcessingDecision === p.id}
-                      onClick={() => handlePaymentDecision(p.id, 'ACCEPT')}
-                      className="flex-1 min-h-[46px] py-2.5 px-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs uppercase rounded-xl flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
-                    >
-                      <Check className="w-4 h-4" />
-                      <span>Accepter</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      disabled={isProcessingDecision === p.id}
-                      onClick={() => handlePaymentDecision(p.id, 'REJECT')}
-                      className="min-h-[46px] py-2.5 px-4 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-bold text-xs uppercase rounded-xl flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50"
-                    >
-                      <X className="w-4 h-4" />
-                      <span>Rejeter</span>
-                    </button>
-                  </div>
-                )}
-              </div>
-            ))
-          )}
-        </div>
-      )}
-
-      {/* ===================================================================== */}
-      {/* TAB 1: PENDING VALIDATION QUEUE (RECHARGE & WITHDRAWAL)               */}
+      {/* TAB 1: PENDING VALIDATION QUEUE (VIP, RECHARGE, WITHDRAWAL)           */}
       {/* ===================================================================== */}
       {activeAdminTab === 'pending' && (
         <div className="space-y-3">
-          {vipPendingPayments.length > 0 && (
-            <button
-              type="button"
-              onClick={() => setActiveAdminTab('vip_proofs')}
-              className="w-full p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs font-bold flex items-center justify-between cursor-pointer"
-            >
-              <span>{vipPendingPayments.length} abonnement(s) VIP à vérifier dans « Preuves VIP »</span>
-              <span className="underline">Ouvrir</span>
-            </button>
-          )}
-
-          {nonVipPendingPayments.length === 0 ? (
+          {pendingPayments.length === 0 ? (
             <div className="p-8 text-center bg-white rounded-2xl border border-slate-200 space-y-2">
               <CheckCircle2 className="w-8 h-8 text-emerald-600 mx-auto" />
-              <div className="text-sm font-bold text-slate-900">Aucun dépôt ou retrait en attente</div>
+              <div className="text-sm font-bold text-slate-900">Aucune demande en attente</div>
               <p className="text-xs text-slate-500">
-                Les demandes de rechargement et retrait Mobile Money apparaîtront ici en direct.
+                Les demandes d'activation VIP, rechargement et retrait apparaîtront ici en direct.
               </p>
             </div>
           ) : (
-            nonVipPendingPayments.map((p) => {
+            pendingPayments.map((p) => {
               const meta = getCategoryMeta(p);
               const IconComp = meta.icon;
               return (
@@ -818,11 +676,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                     {p.bookmakerUserId && (
                       <div className="font-mono font-bold text-blue-700">
                         ID Site de Paris : {p.bookmakerUserId}
-                      </div>
-                    )}
-                    {p.rechargeConfirmedByClient && (
-                      <div className="font-bold text-emerald-700">
-                        Client a confirmé le prélèvement automatique
                       </div>
                     )}
                   </div>
@@ -1188,36 +1041,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               )}
             </>
           )}
-        </div>
-      )}
-      {/* Fullscreen Lightbox Modal for Inspecting SMS Payment Proof */}
-      {previewProofUrl && (
-        <div
-          className="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-xs flex items-center justify-center p-4"
-          onClick={() => setPreviewProofUrl(null)}
-        >
-          <div
-            className="w-full max-w-[410px] bg-white rounded-2xl overflow-hidden shadow-2xl space-y-3 p-3"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between border-b border-slate-100 pb-2">
-              <span className="text-xs font-black text-slate-900">
-                Capture d’écran SMS de paiement
-              </span>
-              <button
-                type="button"
-                onClick={() => setPreviewProofUrl(null)}
-                className="w-8 h-8 rounded-lg bg-slate-100 hover:bg-slate-200 flex items-center justify-center cursor-pointer"
-              >
-                <X className="w-4 h-4 text-slate-700" />
-              </button>
-            </div>
-            <img
-              src={previewProofUrl}
-              alt="Preuve SMS agrandie"
-              className="w-full max-h-[75vh] object-contain rounded-xl bg-slate-50"
-            />
-          </div>
         </div>
       )}
     </div>
