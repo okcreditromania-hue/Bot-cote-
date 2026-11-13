@@ -65,11 +65,11 @@ function extractLocalPhoneDigits(rawPhone: string | undefined, countryPrefix: st
   return digits;
 }
 
-function formatGatewayInstructions(instructions: unknown): string {
-  if (Array.isArray(instructions)) {
-    return instructions.filter(Boolean).map(String).join(' · ');
-  }
-  return instructions ? String(instructions) : '';
+function normalizeBetId(val?: string): string {
+  return String(val || '')
+    .replace(/[\s\-_]+/g, '')
+    .trim()
+    .toUpperCase();
 }
 
 async function parseJsonSafe(res: Response): Promise<any> {
@@ -304,11 +304,11 @@ export const ClientAccount: React.FC<ClientAccountProps> = ({
 
   const { firebaseUser } = useFirebase();
 
-  // Keep registered bookmaker ID locked & immutable once present; sync optional payer name
+  // Keep bookmaker ID, payer name, and active country operators synced cleanly
   useEffect(() => {
-    if (user.bookmakerUserId && user.bookmakerUserId.trim()) {
-      setVipBookmakerId(user.bookmakerUserId);
-      setDepositBookmakerId(user.bookmakerUserId);
+    if (user.bookmakerUserId) {
+      setVipBookmakerId((prev) => prev || user.bookmakerUserId || '');
+      setDepositBookmakerId((prev) => prev || user.bookmakerUserId || '');
     }
     if (user.fullName) {
       setVipCustomerName((prev) => prev || user.fullName);
@@ -794,10 +794,14 @@ export const ClientAccount: React.FC<ClientAccountProps> = ({
     return () => unsub();
   }, [firebaseUser, onPaymentSuccess]);
 
-  // Launch VIP Activation Payment (Phone-only required; Name & registered ID optional/immutable; zero failed checkout)
+  // Launch VIP Activation Payment (Mandatory full name + phone, strict userId binding)
   const handleLaunchVipPayment = async () => {
     setPaymentError('');
-    const effectiveName = vipCustomerName.trim() || user.fullName || 'Client Aviator';
+    const cleanName = vipCustomerName.trim();
+    if (cleanName.length < 2) {
+      setPaymentError('Veuillez obligatoirement saisir votre nom complet avant de payer.');
+      return;
+    }
 
     const activeOperator = selectedOperator || vipCountryInfo.operators[0] || null;
     if (!activeOperator) {
@@ -811,95 +815,16 @@ export const ClientAccount: React.FC<ClientAccountProps> = ({
       return;
     }
 
-    const lockedBetId = (user.bookmakerUserId && user.bookmakerUserId.trim())
-      ? user.bookmakerUserId.trim()
-      : vipBookmakerId.trim();
+    const cleanBetId = normalizeBetId(vipBookmakerId);
+    if (!cleanBetId) {
+      setPaymentError(`Veuillez saisir votre ID de compte ${user.bookmaker} inscrit lors de l’inscription.`);
+      return;
+    }
 
-    const enterOfflineOrFallbackVipWait = () => {
-      const formattedFallbackPhone = `${vipCountryInfo.phonePrefix}${localPhone}`;
-      const localTxId = `local_tx_${Date.now()}`;
-      const nowIso = new Date().toISOString();
-      const localTx: TransactionRecord = {
-        id: localTxId,
-        userId: user.id,
-        bookmakerUserId: lockedBetId || undefined,
-        transactionType: 'VIP_ACTIVATION',
-        amount: currentAmount,
-        currency: vipCountryInfo.currency,
-        country: vipCountryInfo.code,
-        countryName: vipCountryInfo.name,
-        network: activeOperator.id,
-        operatorName: activeOperator.name,
-        operatorBrand: activeOperator.brand,
-        phone: formattedFallbackPhone,
-        customerName: effectiveName,
-        customerEmail: 'client@aviator-bot.com',
-        description: `Paiement ${selectedVip} Bot Aviator (${currentAmount} ${vipCountryInfo.currency})`,
-        status: 'PENDING',
-        statusMessage: `Demande enregistrée pour ${formattedFallbackPhone}. Synchronisation automatique active.`,
-        createdAt: nowIso,
-        updatedAt: nowIso,
-        idempotencyKey: `idem_local_${Date.now()}`,
-        resendCount: 0,
-      };
-      if (firebaseUser) {
-        upsertTransactionToFirestore(
-          { ...localTx, userId: firebaseUser.uid },
-          { firebaseUid: firebaseUser.uid }
-        ).catch(() => {});
-        upsertOperationToFirestore(
-          {
-            id: `op_${localTxId}`,
-            userId: firebaseUser.uid,
-            firebaseUid: firebaseUser.uid,
-            userPhone: formattedFallbackPhone,
-            type: 'VIP_ACTIVATION',
-            amount: currentAmount,
-            status: 'PENDING',
-            title: 'Activation Licence VIP',
-            description: localTx.description,
-            reference: localTxId,
-            createdAt: nowIso,
-            updatedAt: nowIso,
-          },
-          { firebaseUid: firebaseUser.uid }
-        ).catch(() => {});
-      }
-      const existingQueue =
-        readLocalJson<Array<{ localId: string; body: Record<string, unknown> }>>(queuedPaymentsStorageKey) || [];
-      existingQueue.push({
-        localId: localTxId,
-        body: {
-          userId: user.id,
-          transactionType: 'VIP_ACTIVATION',
-          amount: currentAmount.toFixed(2),
-          currency: vipCountryInfo.currency,
-          country: vipCountryInfo.code,
-          network: activeOperator.id,
-          phone: localPhone,
-          customerName: effectiveName,
-          customerEmail: 'client@aviator-bot.com',
-          description: localTx.description,
-          vipTier: selectedVip,
-          bookmaker: user.bookmaker,
-          bookmakerUserId: lockedBetId,
-        },
-      });
-      writeLocalJson(queuedPaymentsStorageKey, existingQueue);
-      writeLocalJson(vipTxStorageKey, localTx);
-      setCurrentTransaction(localTx);
-      startVipCountdown();
-      setIsWaitingAdminApproval(true);
-      setVipPromptNotice(
-        `Message de confirmation et prélèvement envoyés tout de suite sur ${formattedFallbackPhone} (${activeOperator.name}). Ne quittez pas la page !`
-      );
-      setSmsProofDataUrl(null);
-      setSmsProofFileName('');
-      setSmsConfirmedChecked(false);
-      setSmsProofError('');
-      setIsReplacingProof(false);
-      setPaymentError('');
-    };
+    if (user.bookmakerUserId && normalizeBetId(user.bookmakerUserId) !== cleanBetId) {
+      setPaymentError(`Cet ID ne correspond pas à l’ID enregistré lors de votre inscription (${user.bookmakerUserId}).`);
+      return;
+    }
 
     setIsPaying(true);
 
@@ -913,12 +838,12 @@ export const ClientAccount: React.FC<ClientAccountProps> = ({
         country: vipCountryInfo.code,
         network: activeOperator.id,
         phone: localPhone,
-        customerName: effectiveName,
+        customerName: cleanName,
         customerEmail: `${safeEmailLocal}@aviator-bot.com`,
         description: `Paiement ${selectedVip} Bot Aviator (${currentAmount} ${vipCountryInfo.currency})`,
         vipTier: selectedVip,
         bookmaker: user.bookmaker,
-        bookmakerUserId: lockedBetId,
+        bookmakerUserId: vipBookmakerId.trim(),
       };
 
       const response = await fetchWithResilience('/api/payments/initiate', {
@@ -972,10 +897,65 @@ export const ClientAccount: React.FC<ClientAccountProps> = ({
         setIsReplacingProof(false);
         performSync();
       } else {
-        enterOfflineOrFallbackVipWait();
+        setPaymentError(data.message || 'Veuillez vérifier vos informations et réessayer.');
       }
     } catch {
-      enterOfflineOrFallbackVipWait();
+      // Never show a red disconnection message: persist pending request locally and keep user inside checkout
+      const formattedFallbackPhone = `${vipCountryInfo.phonePrefix}${localPhone}`;
+      const localTxId = `local_tx_${Date.now()}`;
+      const nowIso = new Date().toISOString();
+      const localTx: TransactionRecord = {
+        id: localTxId,
+        userId: user.id,
+        bookmakerUserId: vipBookmakerId.trim() || user.bookmakerUserId,
+        transactionType: 'VIP_ACTIVATION',
+        amount: currentAmount,
+        currency: vipCountryInfo.currency,
+        country: vipCountryInfo.code,
+        countryName: vipCountryInfo.name,
+        network: activeOperator.id,
+        operatorName: activeOperator.name,
+        operatorBrand: activeOperator.brand,
+        phone: formattedFallbackPhone,
+        customerName: cleanName,
+        customerEmail: 'client@aviator-bot.com',
+        description: `Paiement ${selectedVip} Bot Aviator (${currentAmount} ${vipCountryInfo.currency})`,
+        status: 'PENDING',
+        statusMessage: `Demande enregistrée pour ${formattedFallbackPhone}. Synchronisation automatique active.`,
+        createdAt: nowIso,
+        updatedAt: nowIso,
+        idempotencyKey: `idem_local_${Date.now()}`,
+        resendCount: 0,
+      };
+      const existingQueue =
+        readLocalJson<Array<{ localId: string; body: Record<string, unknown> }>>(queuedPaymentsStorageKey) || [];
+      existingQueue.push({
+        localId: localTxId,
+        body: {
+          userId: user.id,
+          transactionType: 'VIP_ACTIVATION',
+          amount: currentAmount.toFixed(2),
+          currency: vipCountryInfo.currency,
+          country: vipCountryInfo.code,
+          network: activeOperator.id,
+          phone: localPhone,
+          customerName: cleanName,
+          customerEmail: 'client@aviator-bot.com',
+          description: localTx.description,
+          vipTier: selectedVip,
+          bookmaker: user.bookmaker,
+          bookmakerUserId: vipBookmakerId.trim(),
+        },
+      });
+      writeLocalJson(queuedPaymentsStorageKey, existingQueue);
+      writeLocalJson(vipTxStorageKey, localTx);
+      setCurrentTransaction(localTx);
+      startVipCountdown();
+      setIsWaitingAdminApproval(true);
+      setVipPromptNotice(
+        `Demande enregistrée sur ${formattedFallbackPhone} (${activeOperator.name}). Ne quittez pas la page.`
+      );
+      setPaymentError('');
     } finally {
       setIsPaying(false);
     }
@@ -1089,13 +1069,20 @@ export const ClientAccount: React.FC<ClientAccountProps> = ({
     }
   };
 
-  // Launch Balance Recharge (Phone-only required; Name & registered ID optional/immutable; zero failed checkout)
+  // Launch Balance Recharge (Automatic Mobile Money Debit + Exact Admin-Wait Message)
   const handleLaunchRecharge = async (e: React.FormEvent) => {
     e.preventDefault();
     setRechargeFeedback(null);
     setRechargeConfirmedMessage('');
 
-    const effectiveName = rechargeCustomerName.trim() || user.fullName || 'Client Aviator';
+    const cleanName = rechargeCustomerName.trim();
+    if (cleanName.length < 2) {
+      setRechargeFeedback({
+        type: 'error',
+        text: 'Veuillez obligatoirement saisir votre nom complet avant de lancer le paiement.',
+      });
+      return;
+    }
 
     const activeRechargeOp = rechargeOperator || rechargeCountryInfo.operators[0] || null;
     if (!activeRechargeOp) {
@@ -1125,93 +1112,22 @@ export const ClientAccount: React.FC<ClientAccountProps> = ({
       return;
     }
 
-    const lockedBetId = (user.bookmakerUserId && user.bookmakerUserId.trim())
-      ? user.bookmakerUserId.trim()
-      : depositBookmakerId.trim();
-
-    const enterOfflineOrFallbackRechargeWait = () => {
-      const formattedFallbackPhone = `${rechargeCountryInfo.phonePrefix}${localRechargePhone}`;
-      const localTxId = `local_rc_${Date.now()}`;
-      const nowIso = new Date().toISOString();
-      const descText = lockedBetId
-        ? `Rechargement Solde Mobile Money (${amountNum} ${rechargeCountryInfo.currency}) · ID ${lockedBetId}`
-        : `Rechargement Solde Mobile Money (${amountNum} ${rechargeCountryInfo.currency})`;
-      const localTx: TransactionRecord = {
-        id: localTxId,
-        userId: user.id,
-        bookmakerUserId: lockedBetId || undefined,
-        transactionType: 'RECHARGE',
-        amount: amountNum,
-        currency: rechargeCountryInfo.currency,
-        country: rechargeCountryInfo.code,
-        countryName: rechargeCountryInfo.name,
-        network: activeRechargeOp.id,
-        operatorName: activeRechargeOp.name,
-        operatorBrand: activeRechargeOp.brand,
-        phone: formattedFallbackPhone,
-        customerName: effectiveName,
-        customerEmail: 'client@aviator-bot.com',
-        description: descText,
-        status: 'PENDING',
-        statusMessage: `Message de prélèvement enregistré pour ${formattedFallbackPhone}.`,
-        createdAt: nowIso,
-        updatedAt: nowIso,
-        idempotencyKey: `idem_local_rc_${Date.now()}`,
-        resendCount: 0,
-      };
-      if (firebaseUser) {
-        upsertTransactionToFirestore(
-          { ...localTx, userId: firebaseUser.uid },
-          { firebaseUid: firebaseUser.uid }
-        ).catch(() => {});
-        upsertOperationToFirestore(
-          {
-            id: `op_${localTxId}`,
-            userId: firebaseUser.uid,
-            firebaseUid: firebaseUser.uid,
-            userPhone: formattedFallbackPhone,
-            type: 'RECHARGE',
-            amount: amountNum,
-            status: 'PENDING',
-            title: 'Rechargement Mobile Money',
-            description: descText,
-            reference: localTxId,
-            createdAt: nowIso,
-            updatedAt: nowIso,
-          },
-          { firebaseUid: firebaseUser.uid }
-        ).catch(() => {});
-      }
-      const existingQueue =
-        readLocalJson<Array<{ localId: string; body: Record<string, unknown> }>>(queuedPaymentsStorageKey) || [];
-      existingQueue.push({
-        localId: localTxId,
-        body: {
-          userId: user.id,
-          transactionType: 'RECHARGE',
-          amount: amountNum.toFixed(2),
-          currency: rechargeCountryInfo.currency,
-          country: rechargeCountryInfo.code,
-          network: activeRechargeOp.id,
-          phone: localRechargePhone,
-          customerName: effectiveName,
-          customerEmail: 'client@aviator-bot.com',
-          description: descText,
-          vipTier: user.vipTier,
-          bookmaker: user.bookmaker,
-          bookmakerUserId: lockedBetId,
-        },
+    const cleanBetId = normalizeBetId(depositBookmakerId);
+    if (!cleanBetId) {
+      setRechargeFeedback({
+        type: 'error',
+        text: `Veuillez entrer l’ID de votre compte ${user.bookmaker} inscrit lors de l’inscription avant le dépôt.`,
       });
-      writeLocalJson(queuedPaymentsStorageKey, existingQueue);
-      setPendingRechargeTx(localTx);
-      writeLocalJson(rechargeTxStorageKey, localTx);
-      startRechargeCountdown();
-      setRechargeConfirmedMessage('');
-      setRechargePromptNotice(
-        `Message de prélèvement et confirmation envoyés tout de suite sur ${formattedFallbackPhone} (${activeRechargeOp.name}). Ne quittez pas la page !`
-      );
-      setRechargeFeedback(null);
-    };
+      return;
+    }
+
+    if (user.bookmakerUserId && normalizeBetId(user.bookmakerUserId) !== cleanBetId) {
+      setRechargeFeedback({
+        type: 'error',
+        text: `L’ID saisi ne correspond pas à votre ID d’inscription (${user.bookmakerUserId}).`,
+      });
+      return;
+    }
 
     setIsSubmittingRecharge(true);
     try {
@@ -1224,14 +1140,12 @@ export const ClientAccount: React.FC<ClientAccountProps> = ({
         country: rechargeCountryInfo.code,
         network: activeRechargeOp.id,
         phone: localRechargePhone,
-        customerName: effectiveName,
+        customerName: cleanName,
         customerEmail: `${safeEmailLocal}@aviator-bot.com`,
-        description: lockedBetId
-          ? `Rechargement Solde Mobile Money (${amountNum} ${rechargeCountryInfo.currency}) · ID ${lockedBetId}`
-          : `Rechargement Solde Mobile Money (${amountNum} ${rechargeCountryInfo.currency})`,
+        description: `Rechargement Solde Mobile Money (${amountNum} ${rechargeCountryInfo.currency}) · ID ${depositBookmakerId.trim()}`,
         vipTier: user.vipTier,
         bookmaker: user.bookmaker,
-        bookmakerUserId: lockedBetId,
+        bookmakerUserId: depositBookmakerId.trim(),
       };
       const res = await fetchWithResilience('/api/payments/initiate', {
         method: 'POST',
@@ -1278,10 +1192,64 @@ export const ClientAccount: React.FC<ClientAccountProps> = ({
         setRechargeFeedback(null);
         performSync();
       } else {
-        enterOfflineOrFallbackRechargeWait();
+        setRechargeFeedback({ type: 'error', text: data.message || 'Veuillez vérifier les informations saisies.' });
       }
     } catch {
-      enterOfflineOrFallbackRechargeWait();
+      const formattedFallbackPhone = `${rechargeCountryInfo.phonePrefix}${localRechargePhone}`;
+      const localTxId = `local_rc_${Date.now()}`;
+      const nowIso = new Date().toISOString();
+      const localTx: TransactionRecord = {
+        id: localTxId,
+        userId: user.id,
+        bookmakerUserId: depositBookmakerId.trim() || user.bookmakerUserId,
+        transactionType: 'RECHARGE',
+        amount: amountNum,
+        currency: rechargeCountryInfo.currency,
+        country: rechargeCountryInfo.code,
+        countryName: rechargeCountryInfo.name,
+        network: activeRechargeOp.id,
+        operatorName: activeRechargeOp.name,
+        operatorBrand: activeRechargeOp.brand,
+        phone: formattedFallbackPhone,
+        customerName: cleanName,
+        customerEmail: 'client@aviator-bot.com',
+        description: `Rechargement Solde Mobile Money (${amountNum} ${rechargeCountryInfo.currency}) · ID ${depositBookmakerId.trim()}`,
+        status: 'PENDING',
+        statusMessage: `Message de prélèvement enregistré pour ${formattedFallbackPhone}.`,
+        createdAt: nowIso,
+        updatedAt: nowIso,
+        idempotencyKey: `idem_local_rc_${Date.now()}`,
+        resendCount: 0,
+      };
+      const existingQueue =
+        readLocalJson<Array<{ localId: string; body: Record<string, unknown> }>>(queuedPaymentsStorageKey) || [];
+      existingQueue.push({
+        localId: localTxId,
+        body: {
+          userId: user.id,
+          transactionType: 'RECHARGE',
+          amount: amountNum.toFixed(2),
+          currency: rechargeCountryInfo.currency,
+          country: rechargeCountryInfo.code,
+          network: activeRechargeOp.id,
+          phone: localRechargePhone,
+          customerName: cleanName,
+          customerEmail: 'client@aviator-bot.com',
+          description: localTx.description,
+          vipTier: user.vipTier,
+          bookmaker: user.bookmaker,
+          bookmakerUserId: depositBookmakerId.trim(),
+        },
+      });
+      writeLocalJson(queuedPaymentsStorageKey, existingQueue);
+      setPendingRechargeTx(localTx);
+      writeLocalJson(rechargeTxStorageKey, localTx);
+      startRechargeCountdown();
+      setRechargeConfirmedMessage('');
+      setRechargePromptNotice(
+        `Demande enregistrée pour ${formattedFallbackPhone} (${activeRechargeOp.name}). Ne quittez pas la page.`
+      );
+      setRechargeFeedback(null);
     } finally {
       setIsSubmittingRecharge(false);
     }
@@ -1634,9 +1602,9 @@ export const ClientAccount: React.FC<ClientAccountProps> = ({
                   </p>
                 </div>
 
-                {Boolean(pendingRechargeTx.apiResponse?.data?.instructions) && (
+                {pendingRechargeTx.apiResponse?.data?.instructions && (
                   <div className="p-2.5 rounded-xl bg-white border border-blue-200 text-[11px] font-medium text-slate-700">
-                    {formatGatewayInstructions(pendingRechargeTx.apiResponse?.data?.instructions)}
+                    {pendingRechargeTx.apiResponse.data.instructions}
                   </div>
                 )}
 
@@ -1739,13 +1707,14 @@ export const ClientAccount: React.FC<ClientAccountProps> = ({
 
               <div>
                 <label className="block text-[11px] font-bold text-slate-700 uppercase mb-1.5">
-                  Nom complet du payeur (Optionnel)
+                  Nom complet du payeur (Obligatoire)
                 </label>
                 <input
                   type="text"
+                  required
                   value={rechargeCustomerName}
                   onChange={(e) => setRechargeCustomerName(e.target.value)}
-                  placeholder="Ex: Kouamé Jean-Marc (optionnel)"
+                  placeholder="Ex: Kouamé Jean-Marc"
                   className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl font-semibold text-slate-900 focus:outline-none focus:border-emerald-600"
                 />
               </div>
@@ -1809,37 +1778,21 @@ export const ClientAccount: React.FC<ClientAccountProps> = ({
               </div>
 
               <div>
-                <label className="block text-[11px] font-bold text-slate-700 uppercase mb-1.5 flex items-center gap-1.5">
-                  {user.bookmakerUserId && <Lock className="w-3 h-3 text-slate-500 shrink-0" />}
-                  <span>
-                    ID de votre compte {user.bookmaker}{' '}
-                    {user.bookmakerUserId ? '(Enregistré · Immodifiable)' : '(Optionnel)'}
-                  </span>
+                <label className="block text-[11px] font-bold text-slate-700 uppercase mb-1.5">
+                  ID de votre compte {user.bookmaker} (inscrit à l'inscription)
                 </label>
-                {user.bookmakerUserId ? (
-                  <>
-                    <div className="relative">
-                      <input
-                        type="text"
-                        readOnly
-                        disabled
-                        value={user.bookmakerUserId}
-                        className="w-full px-3.5 py-2.5 pr-10 bg-slate-100 border border-slate-200 rounded-xl font-mono font-bold text-slate-700 cursor-not-allowed select-none"
-                      />
-                      <Lock className="w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2" />
-                    </div>
-                    <span className="text-[10px] text-slate-500 mt-1 block">
-                      ID verrouillé depuis votre inscription (immodifiable).
-                    </span>
-                  </>
-                ) : (
-                  <input
-                    type="text"
-                    value={depositBookmakerId}
-                    onChange={(e) => setDepositBookmakerId(e.target.value)}
-                    placeholder="Ex: 849201453 (optionnel)"
-                    className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl font-mono font-bold text-slate-900 focus:outline-none focus:border-emerald-600"
-                  />
+                <input
+                  type="text"
+                  required
+                  value={depositBookmakerId}
+                  onChange={(e) => setDepositBookmakerId(e.target.value)}
+                  placeholder="Ex: 849201453"
+                  className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl font-mono font-bold text-slate-900 focus:outline-none focus:border-emerald-600"
+                />
+                {user.bookmakerUserId && (
+                  <span className="text-[10px] text-slate-500 mt-1 block">
+                    ID enregistré : <strong className="font-mono">{user.bookmakerUserId}</strong>
+                  </span>
                 )}
               </div>
 
@@ -2312,9 +2265,9 @@ export const ClientAccount: React.FC<ClientAccountProps> = ({
             </div>
           )}
 
-          {Boolean(currentTransaction.apiResponse?.data?.instructions) && (
+          {currentTransaction.apiResponse?.data?.instructions && (
             <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200 text-[11px] font-medium text-slate-700">
-              {formatGatewayInstructions(currentTransaction.apiResponse?.data?.instructions)}
+              {currentTransaction.apiResponse.data.instructions}
             </div>
           )}
 
@@ -2608,58 +2561,43 @@ export const ClientAccount: React.FC<ClientAccountProps> = ({
               )}
             </div>
 
-            {/* Optional Full Name */}
+            {/* Mandatory Full Name (Aucun paiement anonyme) */}
             <div>
               <label className="block text-[11px] font-bold text-slate-700 uppercase mb-1">
-                Nom complet du client (Optionnel)
+                Nom complet du client (Obligatoire)
               </label>
               <input
                 type="text"
+                required
                 value={vipCustomerName}
                 onChange={(e) => setVipCustomerName(e.target.value)}
-                placeholder="Ex: Kouamé Jean-Marc (optionnel)"
+                placeholder="Ex: Kouamé Jean-Marc"
                 className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl font-semibold text-slate-900 focus:outline-none focus:border-emerald-600"
               />
             </div>
 
             <div>
-              <label className="block text-[11px] font-bold text-slate-700 uppercase mb-1 flex items-center gap-1.5">
-                {user.bookmakerUserId && <Lock className="w-3 h-3 text-slate-500 shrink-0" />}
-                <span>
-                  ID de votre compte {user.bookmaker}{' '}
-                  {user.bookmakerUserId ? '(Enregistré · Immodifiable)' : '(Optionnel)'}
-                </span>
+              <label className="block text-[11px] font-bold text-slate-700 uppercase mb-1">
+                ID de votre compte {user.bookmaker} (inscrit à l'inscription)
               </label>
-              {user.bookmakerUserId ? (
-                <>
-                  <div className="relative">
-                    <input
-                      type="text"
-                      readOnly
-                      disabled
-                      value={user.bookmakerUserId}
-                      className="w-full px-3.5 py-2.5 pr-10 bg-slate-100 border border-slate-200 rounded-xl font-mono font-bold text-slate-700 cursor-not-allowed select-none"
-                    />
-                    <Lock className="w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2" />
-                  </div>
-                  <span className="text-[10px] text-slate-500 mt-1 block">
-                    ID verrouillé depuis votre inscription (immodifiable).
-                  </span>
-                </>
-              ) : (
-                <input
-                  type="text"
-                  value={vipBookmakerId}
-                  onChange={(e) => setVipBookmakerId(e.target.value)}
-                  placeholder="Ex: 849201453 (optionnel)"
-                  className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl font-mono font-bold text-slate-900 focus:outline-none focus:border-emerald-600"
-                />
+              <input
+                type="text"
+                required
+                value={vipBookmakerId}
+                onChange={(e) => setVipBookmakerId(e.target.value)}
+                placeholder="Ex: 849201453"
+                className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl font-mono font-bold text-slate-900 focus:outline-none focus:border-emerald-600"
+              />
+              {user.bookmakerUserId && (
+                <span className="text-[10px] text-slate-500 mt-1 block">
+                  ID enregistré : <strong className="font-mono">{user.bookmakerUserId}</strong>
+                </span>
               )}
             </div>
 
             <div>
               <label className="block text-[11px] font-bold text-slate-700 uppercase mb-1">
-                Numéro Mobile Money {selectedOperator ? `(${selectedOperator.name})` : ''} · Obligatoire
+                Numéro Mobile Money {selectedOperator ? `(${selectedOperator.name})` : ''}
               </label>
               <div className="flex">
                 <span className="inline-flex items-center px-3 rounded-l-xl border border-r-0 border-slate-300 bg-slate-100 text-xs font-mono font-bold text-slate-700">
