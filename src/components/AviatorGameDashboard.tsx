@@ -24,10 +24,10 @@ interface AviatorGameDashboardProps {
   onGoToRecharge: () => void;
 }
 
-// Identical calm Spribe Aviator climb curve as server.ts
+// Identical slow, calm Spribe Aviator climb curve as server.ts
 function computeCalmMultiplier(elapsedSec: number): number {
   if (elapsedSec <= 0) return 1.0;
-  return 1 + elapsedSec * 0.115 + Math.pow(elapsedSec, 1.75) * 0.015;
+  return 1 + elapsedSec * 0.065 + Math.pow(elapsedSec, 1.65) * 0.006;
 }
 
 export const AviatorGameDashboard: React.FC<AviatorGameDashboardProps> = ({
@@ -419,7 +419,7 @@ export const AviatorGameDashboard: React.FC<AviatorGameDashboardProps> = ({
           ctx.clip();
 
           const rayCount = 26;
-          const rotSpeed = phase === 'FLYING' ? 0.00014 : 0.00005;
+          const rotSpeed = phase === 'FLYING' ? 0.00007 : 0.00003;
           const rotOffset = (now * rotSpeed) % (Math.PI * 2);
           const maxRadius = Math.hypot(width, height) * 1.3;
           for (let i = 0; i < rayCount; i++) {
@@ -466,7 +466,7 @@ export const AviatorGameDashboard: React.FC<AviatorGameDashboardProps> = ({
           ctx.textBaseline = 'middle';
 
           const yTicks = 4;
-          const yScrollOffset = phase === 'FLYING' ? (smoothElapsed * 0.22) % (1 / yTicks) : 0;
+          const yScrollOffset = phase === 'FLYING' ? (smoothElapsed * 0.11) % (1 / yTicks) : 0;
           for (let i = 0; i <= yTicks; i++) {
             const ratio = i / yTicks;
             const y = originY - ratio * plotH;
@@ -492,7 +492,7 @@ export const AviatorGameDashboard: React.FC<AviatorGameDashboardProps> = ({
           ctx.textAlign = 'center';
           ctx.textBaseline = 'top';
           const xTicks = 5;
-          const xScrollOffset = phase === 'FLYING' ? (smoothElapsed * 0.16) % (1 / xTicks) : 0;
+          const xScrollOffset = phase === 'FLYING' ? (smoothElapsed * 0.08) % (1 / xTicks) : 0;
           for (let i = 0; i <= xTicks; i++) {
             const ratio = i / xTicks;
             const x = originX + ratio * plotW;
@@ -516,19 +516,19 @@ export const AviatorGameDashboard: React.FC<AviatorGameDashboardProps> = ({
           ctx.lineTo(width - padRight, originY);
           ctx.stroke();
 
-          // 4. Smooth Takeoff & Flight Path Trajectory + Plane
+          // 4. Slow, Calm Takeoff & Flight Path Trajectory + Plane
           if (phase === 'FLYING') {
-            const climbProgress = Math.min(1, smoothElapsed / 8.5);
-            const easedX = 1 - Math.pow(1 - climbProgress, 1.55);
-            const easedY = Math.pow(climbProgress, 1.25);
+            const climbProgress = Math.min(1, smoothElapsed / 14.0);
+            const easedX = 1 - Math.pow(1 - climbProgress, 1.45);
+            const easedY = Math.pow(climbProgress, 1.2);
 
             const cruiseOscY =
-              smoothElapsed > 5.5
-                ? Math.sin((smoothElapsed - 5.5) * 1.45) * 10
+              smoothElapsed > 9.0
+                ? Math.sin((smoothElapsed - 9.0) * 0.85) * 8
                 : 0;
             const cruiseOscX =
-              smoothElapsed > 5.5
-                ? Math.cos((smoothElapsed - 5.5) * 1.1) * 5
+              smoothElapsed > 9.0
+                ? Math.cos((smoothElapsed - 9.0) * 0.65) * 4
                 : 0;
 
             const tipX = originX + easedX * 0.74 * plotW + cruiseOscX;
@@ -566,25 +566,25 @@ export const AviatorGameDashboard: React.FC<AviatorGameDashboardProps> = ({
             ctx.stroke();
             ctx.restore();
 
-            const pitchAngle = -0.22 + (smoothElapsed > 5.5 ? Math.cos((smoothElapsed - 5.5) * 1.45) * 0.05 : 0);
+            const pitchAngle = -0.20 + (smoothElapsed > 9.0 ? Math.cos((smoothElapsed - 9.0) * 0.85) * 0.04 : 0);
             drawAuthenticSpribePlane(ctx, tipX, tipY - 3, pitchAngle, now, 1.05);
           } else if (phase === 'CRASHED') {
             if (!crashStartedAtRef.current) {
               crashStartedAtRef.current = now;
             }
             const crashElapsed = (now - crashStartedAtRef.current) / 1000;
-            if (crashElapsed < 1.15) {
+            if (crashElapsed < 1.8) {
               const startX = lastPlanePosRef.current?.x ?? originX + plotW * 0.72;
               const startY = lastPlanePosRef.current?.y ?? originY - plotH * 0.64;
-              const flyX = startX + crashElapsed * plotW * 0.9;
-              const flyY = startY - crashElapsed * plotH * 0.9;
+              const flyX = startX + crashElapsed * plotW * 0.55;
+              const flyY = startY - crashElapsed * plotH * 0.55;
               drawAuthenticSpribePlane(
                 ctx,
                 flyX,
                 flyY,
-                -0.45,
+                -0.4,
                 now,
-                Math.max(0.5, 1.05 - crashElapsed * 0.45)
+                Math.max(0.5, 1.05 - crashElapsed * 0.3)
               );
             }
           }
@@ -669,7 +669,7 @@ export const AviatorGameDashboard: React.FC<AviatorGameDashboardProps> = ({
   };
 
   const phase = effectiveState?.phase || 'COUNTDOWN';
-  const countdown = effectiveState?.countdownSeconds ?? 10;
+  const countdown = effectiveState?.countdownSeconds ?? 15;
   const currentMult = effectiveState?.currentMultiplier ?? 1.0;
   const nextCrashPoint = effectiveState?.nextCrashPoint ?? null;
   const code15 = effectiveState?.code15 || 'AV15...';
@@ -679,7 +679,7 @@ export const AviatorGameDashboard: React.FC<AviatorGameDashboardProps> = ({
   return (
     <div className="space-y-3" onClick={() => aviatorSound.unlock()}>
       {/* ===================================================================== */}
-      {/* 1. COMPACT TOP BOT ALERT (10s BEFORE GAME STARTS - CODE 15 & COTE)    */}
+      {/* 1. COMPACT TOP BOT ALERT (15s BEFORE GAME STARTS - CODE 15 & COTE)    */}
       {/* ===================================================================== */}
       <div
         className={`rounded-2xl border px-3.5 py-2.5 shadow-sm transition-colors ${
@@ -824,8 +824,8 @@ export const AviatorGameDashboard: React.FC<AviatorGameDashboardProps> = ({
 
                 <div className="w-48 mx-auto h-1.5 bg-[#2C2D30] rounded-full overflow-hidden">
                   <div
-                    className="h-full bg-[#E5092A]"
-                    style={{ width: `${(countdown / 10) * 100}%` }}
+                    className="h-full bg-[#E5092A] transition-[width] duration-150"
+                    style={{ width: `${Math.min(100, (countdown / 15) * 100)}%` }}
                   />
                 </div>
 
@@ -1031,18 +1031,29 @@ export const AviatorGameDashboard: React.FC<AviatorGameDashboardProps> = ({
 
         {actionFeedback && (
           <div
-            className={`p-2.5 rounded-xl text-xs font-medium flex items-center gap-2 ${
+            className={`p-2.5 rounded-xl text-xs font-medium flex items-center justify-between gap-2 ${
               actionFeedback.type === 'success'
                 ? 'bg-[#28A909]/20 text-emerald-300 border border-[#28A909]/40'
                 : 'bg-[#E5092A]/20 text-rose-300 border border-[#E5092A]/40'
             }`}
           >
-            {actionFeedback.type === 'success' ? (
-              <CheckCircle2 className="w-4 h-4 shrink-0" />
-            ) : (
-              <AlertCircle className="w-4 h-4 shrink-0" />
+            <div className="flex items-center gap-2 min-w-0">
+              {actionFeedback.type === 'success' ? (
+                <CheckCircle2 className="w-4 h-4 shrink-0" />
+              ) : (
+                <AlertCircle className="w-4 h-4 shrink-0" />
+              )}
+              <span>{actionFeedback.text}</span>
+            </div>
+            {actionFeedback.type === 'error' && actionFeedback.text.toLowerCase().includes('recharger') && (
+              <button
+                type="button"
+                onClick={onGoToRecharge}
+                className="px-2.5 py-1 rounded-lg bg-[#28A909] text-white text-[11px] font-bold shrink-0 cursor-pointer"
+              >
+                Recharger
+              </button>
             )}
-            <span>{actionFeedback.text}</span>
           </div>
         )}
       </div>

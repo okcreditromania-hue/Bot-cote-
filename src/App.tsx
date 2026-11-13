@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { User } from './types';
 import { StorageService } from './services/storage';
 import { TransactionRecord, DashboardStats } from './types/saspay';
@@ -81,7 +81,7 @@ export default function App() {
     };
   }, [isAdminAuthenticated]);
 
-  const fetchTransactionsAndStats = async () => {
+  const fetchTransactionsAndStats = useCallback(async () => {
     try {
       const [txRes, statsRes] = await Promise.all([
         fetch('/api/transactions'),
@@ -100,11 +100,11 @@ export default function App() {
     } catch {
       // ignore transient error
     }
-  };
+  }, []);
 
   useEffect(() => {
     fetchTransactionsAndStats();
-  }, []);
+  }, [fetchTransactionsAndStats]);
 
   const handleAuthSuccess = (user: User) => {
     setCurrentUser(user);
@@ -126,11 +126,12 @@ export default function App() {
     setCurrentView('auth');
   };
 
-  const handlePaymentSuccess = (updatedUser: User) => {
+  const handlePaymentSuccess = useCallback((updatedUser: User) => {
     setCurrentUser(updatedUser);
     StorageService.setCurrentUser(updatedUser);
+    StorageService.addUser(updatedUser);
     fetchTransactionsAndStats();
-  };
+  }, [fetchTransactionsAndStats]);
 
   const handleAdminLoginSuccess = () => {
     setIsAdminAuthenticated(true);
@@ -180,7 +181,7 @@ export default function App() {
             <div>
               <div className="bg-slate-900 border-b border-slate-800 px-3 py-2 text-[11px] text-white flex items-center justify-between">
                 <span className="font-mono text-slate-200">
-                  Admin : <strong>{firebaseUser?.email || '34343434'}</strong>
+                  Admin : <strong>34343434</strong>
                 </span>
                 <button
                   onClick={handleAdminLogout}

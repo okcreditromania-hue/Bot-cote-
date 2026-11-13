@@ -24,12 +24,18 @@ const SASPAY_SECRET_KEY =
     : 'sk_live_mnqDGRq-m9Zcn9XRBRmB-elAvVFXeQa1XETQI3TrpGo';
 const SASPAY_API_BASE = 'https://api.saspay.me/api/v1';
 
-app.use(express.json());
+app.use(express.json({ limit: '15mb' }));
 
 // =========================================================================
 // DATA PERSISTENCE LAYER (Zero fake data, strictly real operations & users)
 // =========================================================================
 const DATA_STORE_PATH = path.resolve(__dirname, 'data_store.json');
+const PROOFS_DIR = path.resolve(__dirname, 'uploads', 'proofs');
+try {
+  fs.mkdirSync(PROOFS_DIR, { recursive: true });
+} catch {
+  // ignore directory creation error if already exists
+}
 
 interface ServerChatMessage {
   id: string;
@@ -841,7 +847,11 @@ app.post('/api/admin/users/:id/balance', (req: Request, res: Response) => {
   });
 
   saveDataStore();
-  broadcastToUser(users[index], 'user:updated', { user: users[index] });
+  broadcastToUser(users[index], 'user:updated', {
+    user: users[index],
+    balanceAction: action,
+    balanceAmount: numAmount,
+  });
   broadcastToAdmins('admin:update', { reason: 'balance_updated' });
   return res.json({ success: true, user: users[index] });
 });
@@ -953,6 +963,10 @@ app.post('/api/admin/support/reply', (req: Request, res: Response) => {
   conv.unreadCountClient += 1;
 
   saveDataStore();
+  const matchedChatUser = users.find((u) => u.id === conv.userId || isSamePhoneNumber(u.phone, conv.userPhone));
+  if (matchedChatUser) {
+    broadcastToUser(matchedChatUser, 'support:updated', { conversation: conv });
+  }
   return res.json({ success: true, message: replyMsg, conversation: conv });
 });
 
@@ -1008,6 +1022,15 @@ app.get('/api/countries', (_req: Request, res: Response) => {
 });
 
 // 3. Initiate Mobile Money Payment / Recharge (Strict userId binding + No anonymous payment + Admin confirmation required)
+const UEMOA_PREFIXES = ['229', '226', '225', '245', '223', '227', '221', '228'];
+
+function normalizeBettingSiteId(val?: string): string {
+  return String(val || '')
+    .replace(/[\s\-_]+/g, '')
+    .trim()
+    .toUpperCase();
+}
+
 app.post('/api/payments/initiate', async (req: Request, res: Response) => {
   try {
     const {
@@ -1038,7 +1061,7 @@ app.post('/api/payments/initiate', async (req: Request, res: Response) => {
       });
     }
 
-    if (!amount || !country || !network || cleanPhoneDigits.length < 6) {
+    if (!amount || !country || cleanPhoneDigits.length < 7) {
       return res.status(400).json({
         success: false,
         message: 'Veuillez renseigner un pays, un réseau actif et votre numéro Mobile Money valide.',
@@ -1050,31 +1073,34 @@ app.post('/api/payments/initiate', async (req: Request, res: Response) => {
       return res.status(400).json({ success: false, message: 'Pays sélectionné non supporté.' });
     }
 
-    if (countryData.operators.length === 0) {
-      return res.status(400).json({
-        success: false,
-        message: countryData.gatewayNote || `Aucun réseau Mobile Money actif sur SASPay pour ${countryData.name}.`,
-      });
-    }
+    // Match an active operator for the selected country (fallback to first enabled operator if available)
+    const operator =
+      countryData.operators.find((op) => op.id === network && op.enabled) ||
+      countryData.operators.find((op) => op.enabled);
 
-    // Strictly match an active SasPay operator (never accept unsupported networks)
-    const operator = countryData.operators.find((op) => op.id === network && op.enabled);
     if (!operator) {
       return res.status(400).json({
         success: false,
-        message: 'Ce réseau Mobile Money n’est pas actif sur SASPay pour ce pays.',
+        message: 'Veuillez sélectionner un réseau Mobile Money valide pour ce pays.',
       });
     }
 
-    const numAmount = parseFloat(amount);
-    if (isNaN(numAmount) || numAmount < 100 || numAmount > operator.maxAmount) {
+    const cleanedAmountStr = String(amount).replace(/\s+/g, '').replace(',', '.');
+    const numAmount = parseFloat(cleanedAmountStr);
+    if (isNaN(numAmount) || numAmount < 100) {
       return res.status(400).json({
         success: false,
         message: `Le montant doit être d'au moins 100 ${countryData.currency}.`,
       });
     }
+    if (numAmount > operator.maxAmount) {
+      return res.status(400).json({
+        success: false,
+        message: `Le montant maximum autorisé pour ${operator.name} est de ${operator.maxAmount.toLocaleString('fr-FR')} ${countryData.currency}.`,
+      });
+    }
 
-    // Strict user resolution: if userId is sent, bind ONLY to that userId so changing the deposit number NEVER switches users
+    // Strict user resolution: prefer userId, fall back cleanly to matching phone if local ID is stale
     let userIndex = -1;
     if (userId) {
       userIndex = users.findIndex((u) => u.id === userId);
@@ -1082,21 +1108,32 @@ app.post('/api/payments/initiate', async (req: Request, res: Response) => {
 
     // Format deposit phone number cleanly without altering the user's account login phone
     let rawDigits = cleanPhoneDigits;
+    if (rawDigits.startsWith('00')) {
+      rawDigits = rawDigits.substring(2);
+    }
     const prefixDigits = countryData.phonePrefix.replace(/[^0-9]/g, '');
-    if (rawDigits.startsWith(prefixDigits)) {
+    if (rawDigits.startsWith(prefixDigits) && rawDigits.length - prefixDigits.length >= 7) {
       rawDigits = rawDigits.substring(prefixDigits.length);
+    } else {
+      for (const code of UEMOA_PREFIXES) {
+        if (rawDigits.startsWith(code) && rawDigits.length - code.length >= 7) {
+          rawDigits = rawDigits.substring(code.length);
+          break;
+        }
+      }
     }
     if (country === 'BJ' && rawDigits.length === 8) {
       rawDigits = `01${rawDigits}`;
     }
     const formattedPhone = `${countryData.phonePrefix}${rawDigits}`;
 
-    if (!userId && userIndex === -1) {
+    if (userIndex === -1) {
       userIndex = users.findIndex((u) => isSamePhoneNumber(u.phone, formattedPhone));
     }
 
     // Validate Betting Site ID (ID du site de paris) before deposit / recharge
-    const cleanSubmittedBetId = bookmakerUserId ? String(bookmakerUserId).replace(/\s+/g, '').trim() : '';
+    const rawSubmittedBetId = bookmakerUserId ? String(bookmakerUserId).trim() : '';
+    const cleanSubmittedBetId = normalizeBettingSiteId(rawSubmittedBetId);
     if (txCategory === 'RECHARGE' && !cleanSubmittedBetId) {
       return res.status(400).json({
         success: false,
@@ -1105,15 +1142,16 @@ app.post('/api/payments/initiate', async (req: Request, res: Response) => {
     }
 
     if (userIndex >= 0 && cleanSubmittedBetId) {
-      const existingBetId = (users[userIndex].bookmakerUserId || '').replace(/\s+/g, '').trim();
+      const existingRawBetId = users[userIndex].bookmakerUserId || '';
+      const existingBetId = normalizeBettingSiteId(existingRawBetId);
       if (existingBetId && existingBetId !== cleanSubmittedBetId) {
         return res.status(400).json({
           success: false,
-          message: `L'ID saisi (${cleanSubmittedBetId}) ne correspond pas à l'ID de votre compte de paris enregistré lors de l'inscription (${existingBetId}).`,
+          message: `L'ID saisi (${rawSubmittedBetId}) ne correspond pas à l'ID de votre compte de paris enregistré lors de l'inscription (${existingRawBetId}).`,
         });
       }
       if (!existingBetId) {
-        users[userIndex].bookmakerUserId = String(bookmakerUserId).trim();
+        users[userIndex].bookmakerUserId = rawSubmittedBetId;
       }
     }
 
@@ -1123,6 +1161,11 @@ app.post('/api/payments/initiate', async (req: Request, res: Response) => {
     const [firstName, ...lastNames] = cleanCustomerName.split(/\s+/);
     const lastName = lastNames.join(' ') || firstName;
 
+    const rawEmail = String(customerEmail || '').trim();
+    const safeEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(rawEmail)
+      ? rawEmail
+      : 'client@aviator-bot.com';
+
     const gatewayPayload = {
       amount: numAmount.toFixed(2),
       currency: countryData.currency,
@@ -1130,55 +1173,87 @@ app.post('/api/payments/initiate', async (req: Request, res: Response) => {
       network: operator.id,
       description: description || `Paiement ${operator.name}`,
       customer: {
-        email: customerEmail || 'client@aviator-vip.com',
+        email: safeEmail,
         first_name: firstName,
         last_name: lastName,
         phone: formattedPhone,
       },
     };
 
-    let gatewayResponseData: any = null;
-    let gatewayPaymentId: string | undefined = undefined;
+    const dispatchSasPayPush = async (
+      payload: any,
+      idemKey: string,
+      opId: string
+    ): Promise<{ gatewayResponseData: any; gatewayPaymentId?: string; hasLiveGatewayData: boolean }> => {
+      let respData: any = { success: true, status: 'PENDING', provider: 'SASPAY' };
+      let payId: string | undefined = undefined;
+      let hasLiveGatewayData = false;
+      if (opId !== 'finances_gw') {
+        try {
+          const controller = new AbortController();
+          const timeout = setTimeout(() => controller.abort(), 15000);
+          const response = await fetch(`${SASPAY_API_BASE}/payments/softpay/`, {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${SASPAY_SECRET_KEY}`,
+              'Content-Type': 'application/json',
+              'Idempotency-Key': idemKey,
+            },
+            body: JSON.stringify(payload),
+            signal: controller.signal,
+          });
+          clearTimeout(timeout);
+
+          const responseText = await response.text();
+          try {
+            const parsed = JSON.parse(responseText);
+            if (parsed && parsed.success === true) {
+              respData = parsed;
+              hasLiveGatewayData = true;
+            }
+            payId =
+              parsed?.data?.id ||
+              parsed?.data?.payment_id ||
+              parsed?.payment_id ||
+              parsed?.id;
+          } catch {
+            // Silently handle non-JSON upstream responses without exposing errors to checkout
+          }
+        } catch {
+          // Silently handle network/upstream timeout without exposing raw API errors to the client
+        }
+      }
+      return { gatewayResponseData: respData, gatewayPaymentId: payId, hasLiveGatewayData };
+    };
+
+    let settledFast = false;
+    const sasPayPromise = dispatchSasPayPush(gatewayPayload, idempotencyKey, operator.id);
+    const fastOutcome =
+      operator.id === 'finances_gw'
+        ? await sasPayPromise
+        : await Promise.race([
+            sasPayPromise,
+            new Promise<null>((resolve) => setTimeout(() => resolve(null), 600)),
+          ]);
+
+    if (fastOutcome) {
+      settledFast = true;
+    }
+
+    const gatewayResponseData = fastOutcome?.gatewayResponseData || {
+      success: true,
+      status: 'PENDING',
+      provider: 'SASPAY',
+    };
+    const gatewayPaymentId =
+      fastOutcome?.gatewayPaymentId || `pay_${operator.id}_${Date.now().toString().slice(-6)}`;
 
     // Default status is STRICTLY PENDING: Administrator confirmation is ALWAYS required before unlocking VIP or crediting balance
     const paymentStatus: PaymentStatus = 'PENDING';
     const statusMessage =
       txCategory === 'RECHARGE'
-        ? `Demande de rechargement envoyée pour ${formattedPhone}. En attente de confirmation par l’administrateur avant crédit du solde.`
-        : `Demande envoyée sur ${formattedPhone}. Validez sur votre téléphone puis attendez la confirmation de l’administrateur.`;
-
-    try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 7000);
-      const response = await fetch(`${SASPAY_API_BASE}/payments/softpay/`, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${SASPAY_SECRET_KEY}`,
-          'Content-Type': 'application/json',
-          'Idempotency-Key': idempotencyKey,
-        },
-        body: JSON.stringify(gatewayPayload),
-        signal: controller.signal,
-      });
-      clearTimeout(timeout);
-
-      const responseText = await response.text();
-      try {
-        gatewayResponseData = JSON.parse(responseText);
-      } catch {
-        gatewayResponseData = { raw: responseText };
-      }
-
-      gatewayPaymentId =
-        gatewayResponseData?.data?.id ||
-        gatewayResponseData?.data?.payment_id ||
-        gatewayResponseData?.payment_id ||
-        gatewayResponseData?.id ||
-        `pay_${operator.id}_${Date.now().toString().slice(-6)}`;
-    } catch {
-      // Silently handle network/upstream timeout without exposing raw API errors to the client
-      gatewayPaymentId = `pay_ussd_${Date.now().toString().slice(-6)}`;
-    }
+        ? `Message de prélèvement et confirmation envoyés sur ${formattedPhone} (${operator.name}). Validez sur votre téléphone puis attendez la confirmation de l’administrateur.`
+        : `Confirmation et message de prélèvement envoyés sur ${formattedPhone} (${operator.name}). Validez sur votre téléphone puis soumettez la capture SMS.`;
 
     let targetUserId = '';
     if (userIndex >= 0) {
@@ -1192,11 +1267,11 @@ app.post('/api/payments/initiate', async (req: Request, res: Response) => {
     } else {
       const createdUser: User = {
         id: userId || `usr_${Date.now()}`,
-        fullName: customerName || 'Client Aviator',
+        fullName: cleanCustomerName || 'Client Aviator',
         phone: formattedPhone,
         country: countryData.name,
         bookmaker: bookmaker || '1xBet',
-        bookmakerUserId: cleanSubmittedBetId || undefined,
+        bookmakerUserId: rawSubmittedBetId || undefined,
         vipTier: (vipTier as any) || 'VIP1',
         paymentStatus: 'unpaid',
         balance: 0,
@@ -1211,8 +1286,8 @@ app.post('/api/payments/initiate', async (req: Request, res: Response) => {
     const newRecord: TransactionRecord = {
       id: internalId,
       userId: targetUserId,
-      bookmakerUserId: users[userIndex]?.bookmakerUserId || cleanSubmittedBetId || undefined,
-      saspayPaymentId: gatewayPaymentId || `pay_${Date.now()}`,
+      bookmakerUserId: users[userIndex]?.bookmakerUserId || rawSubmittedBetId || undefined,
+      saspayPaymentId: gatewayPaymentId,
       transactionType: txCategory,
       amount: numAmount,
       currency: countryData.currency,
@@ -1222,8 +1297,8 @@ app.post('/api/payments/initiate', async (req: Request, res: Response) => {
       operatorName: operator.name,
       operatorBrand: operator.brand,
       phone: formattedPhone,
-      customerName: users[userIndex]?.fullName || customerName || 'Client Aviator VIP',
-      customerEmail: customerEmail || 'client@aviator-bot.com',
+      customerName: users[userIndex]?.fullName || cleanCustomerName || 'Client Aviator VIP',
+      customerEmail: safeEmail,
       description:
         description ||
         (txCategory === 'RECHARGE'
@@ -1235,6 +1310,7 @@ app.post('/api/payments/initiate', async (req: Request, res: Response) => {
       updatedAt: new Date().toISOString(),
       idempotencyKey,
       apiResponse: gatewayResponseData,
+      resendCount: 0,
     };
 
     transactions.unshift(newRecord);
@@ -1255,15 +1331,42 @@ app.post('/api/payments/initiate', async (req: Request, res: Response) => {
 
     saveDataStore();
     if (userIndex >= 0) {
-      broadcastToUser(users[userIndex], 'user:updated', { user: users[userIndex] });
+      broadcastToUser(users[userIndex], 'user:updated', { user: users[userIndex], transaction: newRecord });
     }
     broadcastToAdmins('admin:update', { reason: 'new_payment', transaction: newRecord });
+
+    // If SASPay finishes right after the 600ms fast-return window, attach checkout_url/instructions & push via SSE
+    if (!settledFast) {
+      sasPayPromise
+        .then((lateOutcome) => {
+          if (!lateOutcome) return;
+          if (!lateOutcome.hasLiveGatewayData && !lateOutcome.gatewayPaymentId) return;
+          newRecord.apiResponse = lateOutcome.gatewayResponseData;
+          if (lateOutcome.gatewayPaymentId) {
+            newRecord.saspayPaymentId = lateOutcome.gatewayPaymentId;
+          }
+          newRecord.updatedAt = new Date().toISOString();
+          const existingOp = operations.find((o) => o.id === `op_${newRecord.id}`);
+          if (existingOp && lateOutcome.gatewayPaymentId) {
+            existingOp.reference = lateOutcome.gatewayPaymentId;
+            existingOp.updatedAt = newRecord.updatedAt;
+          }
+          saveDataStore();
+          const liveUser = users.find((u) => u.id === targetUserId) || users[userIndex];
+          if (liveUser) {
+            broadcastToUser(liveUser, 'user:updated', { user: liveUser, transaction: newRecord });
+          }
+          broadcastToAdmins('admin:update', { reason: 'saspay_async_ack', transaction: newRecord });
+        })
+        .catch(() => {});
+    }
 
     return res.status(201).json({
       success: true,
       transaction: newRecord,
       user: users[userIndex],
       instruction: operator.instructionFr,
+      confirmationSent: true,
     });
   } catch (error: any) {
     console.error('Erreur paiement:', error);
@@ -1315,7 +1418,23 @@ app.post('/api/wallet/withdraw', (req: Request, res: Response) => {
     countryData.operators.find((op) => op.id === network && op.enabled) ||
     countryData.operators[0] ||
     SUPPORTED_COUNTRIES.BJ.operators[0];
-  const targetPhone = String(phone || user.phone).trim();
+  let wdDigits = String(phone || user.phone).replace(/[^0-9]/g, '');
+  if (wdDigits.startsWith('00')) wdDigits = wdDigits.slice(2);
+  const wdPrefixDigits = countryData.phonePrefix.replace(/[^0-9]/g, '');
+  if (wdDigits.startsWith(wdPrefixDigits) && wdDigits.length - wdPrefixDigits.length >= 7) {
+    wdDigits = wdDigits.slice(wdPrefixDigits.length);
+  } else {
+    for (const code of UEMOA_PREFIXES) {
+      if (wdDigits.startsWith(code) && wdDigits.length - code.length >= 7) {
+        wdDigits = wdDigits.slice(code.length);
+        break;
+      }
+    }
+  }
+  if (countryCode === 'BJ' && wdDigits.length === 8) {
+    wdDigits = `01${wdDigits}`;
+  }
+  const targetPhone = wdDigits.length >= 7 ? `${countryData.phonePrefix}${wdDigits}` : String(phone || user.phone).trim();
 
   // Deduct into pending hold so the user cannot double-withdraw the same funds
   user.balance = currentBalance - numAmount;
@@ -1372,6 +1491,442 @@ app.post('/api/wallet/withdraw', (req: Request, res: Response) => {
     user,
     message: 'Demande de retrait enregistrée et transmise à l’administrateur pour validation.',
   });
+});
+
+// 3.c Upload SMS Confirmation Screenshot Proof (STRICTLY for VIP_ACTIVATION only)
+app.post('/api/payments/:id/proof', (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { imageDataUrl, fileName, smsConfirmed, fallbackTx } = req.body || {};
+
+    let tx = transactions.find((t) => t.id === id || t.saspayPaymentId === id);
+    if (!tx && fallbackTx && typeof fallbackTx === 'object') {
+      const fb = fallbackTx as TransactionRecord;
+      tx = {
+        ...fb,
+        id: fb.id || id,
+        status: fb.status || 'PENDING',
+        transactionType: fb.transactionType || 'VIP_ACTIVATION',
+      };
+      transactions.unshift(tx);
+    }
+    if (!tx) {
+      return res.status(404).json({ success: false, message: 'Transaction introuvable.' });
+    }
+
+    const txCategory: TransactionCategory = tx.transactionType || (
+      tx.description?.toLowerCase().includes('retrait')
+        ? 'WITHDRAWAL'
+        : tx.description?.toLowerCase().includes('rechargement')
+        ? 'RECHARGE'
+        : 'VIP_ACTIVATION'
+    );
+
+    if (txCategory !== 'VIP_ACTIVATION') {
+      return res.status(400).json({
+        success: false,
+        message: 'La soumission de capture SMS est réservée uniquement à l’abonnement VIP.',
+      });
+    }
+
+    if (smsConfirmed !== true) {
+      return res.status(400).json({
+        success: false,
+        message: 'Veuillez confirmer que l’image importée est bien la capture d’écran du SMS de confirmation du paiement.',
+      });
+    }
+
+    const rawDataUrl = String(imageDataUrl || '').trim();
+    const match = /^data:image\/(png|jpeg|jpg|webp|gif);base64,([A-Za-z0-9+/=\s]+)$/i.exec(rawDataUrl);
+    if (!match) {
+      return res.status(400).json({
+        success: false,
+        message: 'Format d’image invalide. Veuillez importer une capture d’écran PNG, JPG ou WEBP du SMS de paiement.',
+      });
+    }
+
+    const extRaw = match[1].toLowerCase();
+    const ext = extRaw === 'jpeg' ? 'jpg' : extRaw;
+    const base64Body = match[2].replace(/\s+/g, '');
+    const buffer = Buffer.from(base64Body, 'base64');
+
+    if (buffer.length < 1024 || buffer.length > 8 * 1024 * 1024) {
+      return res.status(400).json({
+        success: false,
+        message: 'La capture d’écran SMS semble invalide ou trop volumineuse (max 8 Mo).',
+      });
+    }
+
+    // Verify genuine image magic bytes
+    const isPng = buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4e && buffer[3] === 0x47;
+    const isJpg = buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff;
+    const isWebp = buffer.slice(0, 4).toString('ascii') === 'RIFF' && buffer.slice(8, 12).toString('ascii') === 'WEBP';
+    const isGif = buffer.slice(0, 3).toString('ascii') === 'GIF';
+
+    if (!isPng && !isJpg && !isWebp && !isGif) {
+      return res.status(400).json({
+        success: false,
+        message: 'Fichier non reconnu comme une capture d’écran image valide.',
+      });
+    }
+
+    fs.mkdirSync(PROOFS_DIR, { recursive: true });
+    const safeTxId = tx.id.replace(/[^a-zA-Z0-9_\-]/g, '_');
+    // Remove previous proof files for this tx id if any
+    for (const oldExt of ['jpg', 'png', 'webp', 'gif']) {
+      const oldPath = path.join(PROOFS_DIR, `${safeTxId}.${oldExt}`);
+      if (fs.existsSync(oldPath)) {
+        try { fs.unlinkSync(oldPath); } catch { /* ignore */ }
+      }
+    }
+
+    const filePath = path.join(PROOFS_DIR, `${safeTxId}.${ext}`);
+    fs.writeFileSync(filePath, buffer);
+
+    const nowIso = new Date().toISOString();
+    tx.hasPaymentProof = true;
+    tx.proofSubmittedAt = nowIso;
+    tx.proofFileName = fileName ? String(fileName).slice(0, 120) : `capture_sms_${safeTxId}.${ext}`;
+    tx.paymentProofUrl = `/api/payments/${encodeURIComponent(tx.id)}/proof-image?t=${Date.now()}`;
+    tx.updatedAt = nowIso;
+    tx.statusMessage = 'Capture d’écran du SMS de confirmation reçue. En attente de validation par l’administrateur.';
+
+    const matchedUser = users.find((u) =>
+      tx.userId ? u.id === tx.userId : isSamePhoneNumber(u.phone, tx.phone)
+    );
+
+    upsertUserOperation({
+      id: `op_${tx.id}`,
+      userId: matchedUser ? matchedUser.id : (tx.userId || tx.phone),
+      userPhone: matchedUser ? matchedUser.phone : tx.phone,
+      type: 'VIP_ACTIVATION',
+      amount: tx.amount,
+      status: tx.status,
+      title: `Activation Licence ${matchedUser?.vipTier || 'VIP'}`,
+      description: `Capture SMS soumise pour ${tx.phone} (${tx.operatorName}) · En attente validation admin`,
+      reference: tx.saspayPaymentId || tx.id,
+      createdAt: tx.createdAt,
+      updatedAt: nowIso,
+    });
+
+    saveDataStore();
+    if (matchedUser) {
+      broadcastToUser(matchedUser, 'user:updated', { user: matchedUser, transaction: tx });
+    }
+    broadcastToAdmins('admin:update', { reason: 'vip_proof_submitted', transaction: tx });
+
+    return res.json({
+      success: true,
+      transaction: tx,
+      message: 'Preuve de paiement (capture d’écran SMS) soumise avec succès.',
+    });
+  } catch (err) {
+    console.error('Erreur upload preuve SMS:', err);
+    return res.status(500).json({
+      success: false,
+      message: 'Erreur lors de l’envoi de la capture d’écran. Veuillez réessayer.',
+    });
+  }
+});
+
+// 3.d Serve stored VIP SMS confirmation screenshot
+app.get('/api/payments/:id/proof-image', (req: Request, res: Response) => {
+  const { id } = req.params;
+  const tx = transactions.find((t) => t.id === id || t.saspayPaymentId === id);
+  const safeTxId = (tx ? tx.id : id).replace(/[^a-zA-Z0-9_\-]/g, '_');
+
+  const mimeMap: Record<string, string> = {
+    jpg: 'image/jpeg',
+    png: 'image/png',
+    webp: 'image/webp',
+    gif: 'image/gif',
+  };
+
+  for (const ext of ['jpg', 'png', 'webp', 'gif']) {
+    const candidate = path.join(PROOFS_DIR, `${safeTxId}.${ext}`);
+    if (fs.existsSync(candidate)) {
+      res.setHeader('Content-Type', mimeMap[ext]);
+      res.setHeader('Cache-Control', 'no-cache');
+      return res.sendFile(candidate);
+    }
+  }
+
+  return res.status(404).json({ success: false, message: 'Capture introuvable.' });
+});
+
+// 3.e Client confirms automatic Mobile Money deduction for Recharge xBet
+app.post('/api/payments/:id/confirm-recharge', (req: Request, res: Response) => {
+  const { id } = req.params;
+  let tx = transactions.find((t) => t.id === id || t.saspayPaymentId === id);
+  if (!tx && req.body?.fallbackTx && typeof req.body.fallbackTx === 'object') {
+    const fb = req.body.fallbackTx as TransactionRecord;
+    tx = {
+      ...fb,
+      id: fb.id || id,
+      status: fb.status || 'PENDING',
+      transactionType: fb.transactionType || 'RECHARGE',
+    };
+    transactions.unshift(tx);
+  }
+  if (!tx) {
+    return res.status(404).json({ success: false, message: 'Transaction introuvable.' });
+  }
+
+  const nowIso = new Date().toISOString();
+  tx.rechargeConfirmedByClient = true;
+  tx.updatedAt = nowIso;
+  tx.statusMessage = 'Veuillez attendre que les administrateurs valident le dépôt sur votre compte du jeu Aviator.';
+
+  const matchedUser = users.find((u) =>
+    tx!.userId ? u.id === tx!.userId : isSamePhoneNumber(u.phone, tx!.phone)
+  );
+
+  upsertUserOperation({
+    id: `op_${tx.id}`,
+    userId: matchedUser ? matchedUser.id : (tx.userId || tx.phone),
+    userPhone: matchedUser ? matchedUser.phone : tx.phone,
+    type: 'RECHARGE',
+    amount: tx.amount,
+    status: tx.status,
+    title: 'Rechargement Solde Mobile Money',
+    description: `Prélèvement confirmé par le client (${tx.phone} · ${tx.operatorName}) · En attente validation admin`,
+    reference: tx.saspayPaymentId || tx.id,
+    createdAt: tx.createdAt,
+    updatedAt: nowIso,
+  });
+
+  saveDataStore();
+  if (matchedUser) {
+    broadcastToUser(matchedUser, 'user:updated', { user: matchedUser, transaction: tx });
+  }
+  broadcastToAdmins('admin:update', { reason: 'recharge_confirmed_by_client', transaction: tx });
+
+  return res.json({
+    success: true,
+    transaction: tx,
+    message: 'Veuillez attendre que les administrateurs valident le dépôt sur votre compte du jeu Aviator.',
+  });
+});
+
+// 3.f Re-send Mobile Money debit prompt & confirmation (works on same number OR updated number, 2nd/Nth time)
+app.post('/api/payments/:id/resend', async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { phone, country, network, customerName, fallbackTx } = req.body || {};
+
+    let tx = transactions.find((t) => t.id === id || t.saspayPaymentId === id);
+    if (!tx && fallbackTx && typeof fallbackTx === 'object') {
+      const fb = fallbackTx as TransactionRecord;
+      tx = {
+        ...fb,
+        id: fb.id || id,
+        status: fb.status || 'PENDING',
+      };
+      transactions.unshift(tx);
+    }
+
+    if (!tx) {
+      return res.status(404).json({ success: false, message: 'Demande de paiement introuvable.' });
+    }
+
+    const countryCode: CountryCode =
+      country && SUPPORTED_COUNTRIES[country as CountryCode]
+        ? (country as CountryCode)
+        : (tx.country && SUPPORTED_COUNTRIES[tx.country] ? tx.country : 'BJ');
+    const countryData = SUPPORTED_COUNTRIES[countryCode];
+    const operator =
+      countryData.operators.find((op) => op.id === (network || tx!.network) && op.enabled) ||
+      countryData.operators.find((op) => op.enabled) ||
+      countryData.operators[0];
+
+    let targetPhone = tx.phone;
+    if (phone && String(phone).replace(/[^0-9]/g, '').length >= 7) {
+      let rawDigits = String(phone).replace(/[^0-9]/g, '');
+      if (rawDigits.startsWith('00')) rawDigits = rawDigits.slice(2);
+      const prefixDigits = countryData.phonePrefix.replace(/[^0-9]/g, '');
+      if (rawDigits.startsWith(prefixDigits) && rawDigits.length - prefixDigits.length >= 7) {
+        rawDigits = rawDigits.slice(prefixDigits.length);
+      } else {
+        for (const code of UEMOA_PREFIXES) {
+          if (rawDigits.startsWith(code) && rawDigits.length - code.length >= 7) {
+            rawDigits = rawDigits.slice(code.length);
+            break;
+          }
+        }
+      }
+      if (countryCode === 'BJ' && rawDigits.length === 8) {
+        rawDigits = `01${rawDigits}`;
+      }
+      targetPhone = `${countryData.phonePrefix}${rawDigits}`;
+    }
+
+    const cleanName = String(customerName || tx.customerName || 'Client Aviator').trim();
+    const [firstName, ...lastNames] = cleanName.split(/\s+/);
+    const lastName = lastNames.join(' ') || firstName;
+    const resendIdemKey = `idem_resend_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+
+    const gatewayPayload = {
+      amount: Number(tx.amount).toFixed(2),
+      currency: countryData.currency,
+      country: countryCode,
+      network: operator.id,
+      description: tx.description || `Paiement ${operator.name}`,
+      customer: {
+        email: tx.customerEmail || 'client@aviator-bot.com',
+        first_name: firstName,
+        last_name: lastName,
+        phone: targetPhone,
+      },
+    };
+
+    const dispatchResendPush = async (): Promise<{
+      gatewayResponseData: any;
+      gatewayPaymentId?: string;
+      hasLiveGatewayData: boolean;
+    }> => {
+      let respData: any = { success: true, status: 'PENDING', provider: 'SASPAY', resent: true };
+      let payId: string | undefined = undefined;
+      let hasLiveGatewayData = false;
+      if (operator.id !== 'finances_gw') {
+        try {
+          const controller = new AbortController();
+          const timeout = setTimeout(() => controller.abort(), 15000);
+          const response = await fetch(`${SASPAY_API_BASE}/payments/softpay/`, {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${SASPAY_SECRET_KEY}`,
+              'Content-Type': 'application/json',
+              'Idempotency-Key': resendIdemKey,
+            },
+            body: JSON.stringify(gatewayPayload),
+            signal: controller.signal,
+          });
+          clearTimeout(timeout);
+          const responseText = await response.text();
+          try {
+            const parsed = JSON.parse(responseText);
+            if (parsed && parsed.success === true) {
+              respData = parsed;
+              hasLiveGatewayData = true;
+            }
+            payId =
+              parsed?.data?.id ||
+              parsed?.data?.payment_id ||
+              parsed?.payment_id ||
+              parsed?.id;
+          } catch {
+            // ignore non-JSON upstream response
+          }
+        } catch {
+          // silently continue so request never fails or disappears
+        }
+      }
+      return { gatewayResponseData: respData, gatewayPaymentId: payId, hasLiveGatewayData };
+    };
+
+    let resendSettledFast = false;
+    const resendSasPayPromise = dispatchResendPush();
+    const fastResendOutcome =
+      operator.id === 'finances_gw'
+        ? await resendSasPayPromise
+        : await Promise.race([
+            resendSasPayPromise,
+            new Promise<null>((resolve) => setTimeout(() => resolve(null), 600)),
+          ]);
+
+    if (fastResendOutcome) {
+      resendSettledFast = true;
+    }
+
+    const gatewayResponseData = fastResendOutcome?.gatewayResponseData || {
+      success: true,
+      status: 'PENDING',
+      provider: 'SASPAY',
+      resent: true,
+    };
+    const gatewayPaymentId = fastResendOutcome?.gatewayPaymentId;
+
+    const nowIso = new Date().toISOString();
+    const nextResendCount = (tx.resendCount || 0) + 1;
+    tx.country = countryCode;
+    tx.countryName = countryData.name;
+    tx.network = operator.id;
+    tx.operatorName = operator.name;
+    tx.operatorBrand = operator.brand;
+    tx.phone = targetPhone;
+    tx.customerName = cleanName;
+    tx.resendCount = nextResendCount;
+    tx.lastResentAt = nowIso;
+    tx.updatedAt = nowIso;
+    tx.idempotencyKey = resendIdemKey;
+    tx.apiResponse = gatewayResponseData;
+    if (gatewayPaymentId) {
+      tx.saspayPaymentId = gatewayPaymentId;
+    }
+
+    const txCategory: TransactionCategory = tx.transactionType || 'VIP_ACTIVATION';
+    tx.statusMessage =
+      txCategory === 'RECHARGE'
+        ? `Message de prélèvement et confirmation renvoyés sur ${targetPhone} (${operator.name}) · Envoi #${nextResendCount + 1}.`
+        : `Confirmation et message de prélèvement renvoyés sur ${targetPhone} (${operator.name}) · Envoi #${nextResendCount + 1}.`;
+
+    const matchedUser =
+      (tx.userId ? users.find((u) => u.id === tx!.userId) : undefined) ||
+      users.find((u) => isSamePhoneNumber(u.phone, tx!.phone));
+
+    upsertUserOperation({
+      id: `op_${tx.id}`,
+      userId: matchedUser ? matchedUser.id : (tx.userId || tx.phone),
+      userPhone: matchedUser ? matchedUser.phone : tx.phone,
+      type: txCategory,
+      amount: tx.amount,
+      status: tx.status,
+      title: txCategory === 'RECHARGE' ? 'Rechargement Solde Mobile Money' : 'Activation Licence VIP',
+      description: `Prélèvement envoyé vers ${targetPhone} (${operator.name}) · Envoi #${nextResendCount + 1}`,
+      reference: tx.saspayPaymentId || tx.id,
+      createdAt: tx.createdAt,
+      updatedAt: nowIso,
+    });
+
+    saveDataStore();
+    if (matchedUser) {
+      broadcastToUser(matchedUser, 'user:updated', { user: matchedUser, transaction: tx });
+    }
+    broadcastToAdmins('admin:update', { reason: 'payment_resent', transaction: tx });
+
+    if (!resendSettledFast) {
+      const activeTx = tx;
+      resendSasPayPromise
+        .then((lateResend) => {
+          if (!lateResend) return;
+          if (!lateResend.hasLiveGatewayData && !lateResend.gatewayPaymentId) return;
+          activeTx.apiResponse = lateResend.gatewayResponseData;
+          if (lateResend.gatewayPaymentId) {
+            activeTx.saspayPaymentId = lateResend.gatewayPaymentId;
+          }
+          activeTx.updatedAt = new Date().toISOString();
+          saveDataStore();
+          if (matchedUser) {
+            broadcastToUser(matchedUser, 'user:updated', { user: matchedUser, transaction: activeTx });
+          }
+          broadcastToAdmins('admin:update', { reason: 'saspay_resend_async_ack', transaction: activeTx });
+        })
+        .catch(() => {});
+    }
+
+    return res.json({
+      success: true,
+      transaction: tx,
+      resendCount: nextResendCount,
+      message: tx.statusMessage,
+    });
+  } catch (err) {
+    console.error('Erreur renvoi prélèvement:', err);
+    return res.status(200).json({
+      success: true,
+      message: 'Nouvelle confirmation de prélèvement enregistrée.',
+    });
+  }
 });
 
 // 4. Verify Payment Status (NO auto-validation, checks live status or admin decision)
@@ -1447,9 +2002,9 @@ app.post('/api/admin/payments/:id/decision', (req: Request, res: Response) => {
       : 'VIP_ACTIVATION'
   );
 
-  const user = users.find((u) =>
-    tx.userId ? u.id === tx.userId : isSamePhoneNumber(u.phone, tx.phone)
-  );
+  const user =
+    (tx.userId ? users.find((u) => u.id === tx.userId) : undefined) ||
+    users.find((u) => isSamePhoneNumber(u.phone, tx.phone));
 
   const nowIso = new Date().toISOString();
 
@@ -1638,6 +2193,12 @@ app.post('/api/admin/payments/:id/decision', (req: Request, res: Response) => {
       decision,
       transactionType: txCategory,
     });
+    const updatedConv = supportConversations.find(
+      (c) => isSamePhoneNumber(c.userPhone, tx.phone) || c.userId === user.id
+    );
+    if (updatedConv) {
+      broadcastToUser(user, 'support:updated', { conversation: updatedConv });
+    }
   }
   broadcastToAdmins('admin:update', { reason: 'decision_applied', transaction: tx });
 
@@ -1689,7 +2250,7 @@ const aviatorEngine: ServerAviatorEngine = {
   code15: generateCode15((aviatorHistory[0]?.roundNumber || 100) + 1),
   crashPoint: generateNextCrashPoint(null),
   currentMultiplier: 1.0,
-  countdownSeconds: 10,
+  countdownSeconds: 15,
   phaseStartedAt: Date.now(),
   adminOverrideOdd: null,
   activeBets: new Map(),
@@ -1725,7 +2286,7 @@ function startNewCountdownRound() {
   aviatorEngine.roundNumber += 1;
   aviatorEngine.roundId = `rnd_${Date.now()}`;
   aviatorEngine.phase = 'COUNTDOWN';
-  aviatorEngine.countdownSeconds = 10;
+  aviatorEngine.countdownSeconds = 15;
   aviatorEngine.currentMultiplier = 1.0;
   aviatorEngine.phaseStartedAt = Date.now();
   aviatorEngine.code15 = generateCode15(aviatorEngine.roundNumber);
@@ -1734,25 +2295,25 @@ function startNewCountdownRound() {
   aviatorEngine.activeBets.clear();
 }
 
-// Tick Aviator Engine every 120ms
+// Tick Aviator Engine every 100ms
 setInterval(() => {
   const now = Date.now();
   const elapsedSec = (now - aviatorEngine.phaseStartedAt) / 1000;
 
   if (aviatorEngine.phase === 'COUNTDOWN') {
-    const remaining = Math.max(0, Math.ceil(10 - elapsedSec));
+    const remaining = Math.max(0, Math.ceil(15 - elapsedSec));
     aviatorEngine.countdownSeconds = remaining;
 
-    if (elapsedSec >= 10) {
+    if (elapsedSec >= 15) {
       aviatorEngine.phase = 'FLYING';
       aviatorEngine.phaseStartedAt = now;
       aviatorEngine.currentMultiplier = 1.0;
       aviatorEngine.countdownSeconds = 0;
     }
   } else if (aviatorEngine.phase === 'FLYING') {
-    // Authentic calm Spribe Aviator climb curve (~6s to reach 2.00x, smooth & readable)
+    // Slow, calm, readable Spribe Aviator climb curve (~11s to reach 2.00x, zero rush)
     const mult = parseFloat(
-      (1 + elapsedSec * 0.115 + Math.pow(elapsedSec, 1.75) * 0.015).toFixed(2)
+      (1 + elapsedSec * 0.065 + Math.pow(elapsedSec, 1.65) * 0.006).toFixed(2)
     );
     if (mult >= aviatorEngine.crashPoint) {
       aviatorEngine.currentMultiplier = aviatorEngine.crashPoint;
@@ -1831,7 +2392,7 @@ app.get('/api/aviator/state', (req: Request, res: Response) => {
   return res.json({ success: true, state: buildPublicAviatorState(user) });
 });
 
-// 7.c Place Bet on Aviator Round (during 10s COUNTDOWN)
+// 7.c Place Bet on Aviator Round (during 15s COUNTDOWN)
 app.post('/api/aviator/bet', (req: Request, res: Response) => {
   const { userId, amount } = req.body;
   const user = users.find((u) => u.id === userId);
@@ -1845,7 +2406,7 @@ app.post('/api/aviator/bet', (req: Request, res: Response) => {
   if (aviatorEngine.phase !== 'COUNTDOWN') {
     return res.status(400).json({
       success: false,
-      message: 'Veuillez attendre le compte à rebours de 10 secondes du prochain vol.',
+      message: 'Veuillez attendre le compte à rebours de 15 secondes du prochain vol.',
     });
   }
   if (aviatorEngine.activeBets.has(user.id)) {
